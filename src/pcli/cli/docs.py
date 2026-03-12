@@ -19,7 +19,7 @@ from pcli.adapters.client import create_client
 from pcli.adapters.document_search import DocumentSearchAdapter
 from pcli.cli.io import emit_success
 from pcli.core.cursor import decode_cursor, encode_cursor
-from pcli.core.errors import UsageValidationError
+from pcli.core.errors import PcliError, UsageValidationError
 from pcli.core.options import FormatMode, GlobalOptions, parse_bool, parse_scalar
 from pcli.core.output import ndjson_item, ndjson_summary
 from pcli.core.page_spec import normalize_page_selection
@@ -145,6 +145,9 @@ _EMAIL_KNOWN_OPTION_KEYS = {
 _NOTES_LIST_KNOWN_OPTION_KEYS = _METADATA_KNOWN_OPTION_KEYS
 _NOTES_ADD_KNOWN_OPTION_KEYS = _METADATA_KNOWN_OPTION_KEYS | {"note"}
 _NOTES_DELETE_KNOWN_OPTION_KEYS = _METADATA_KNOWN_OPTION_KEYS | {"yes"}
+_CREATE_KNOWN_OPTION_KEYS = _METADATA_KNOWN_OPTION_KEYS | {"document", "filename"}
+_UPDATE_KNOWN_OPTION_KEYS = _METADATA_KNOWN_OPTION_KEYS | {"only_changed"}
+_DELETE_KNOWN_OPTION_KEYS = _METADATA_KNOWN_OPTION_KEYS | {"yes"}
 _GET_KNOWN_OPTION_KEYS = {
     "pages",
     "max_pages",
@@ -705,6 +708,82 @@ async def _delete_document_note(client: Any, document_id: int, note_id: int) -> 
 
 def _delete_document_note_sync(client: Any, document_id: int, note_id: int) -> bool:
     return asyncio.run(_delete_document_note(client, document_id, note_id))
+
+
+def _mutation_error_details(exc: Exception) -> dict[str, Any]:
+    payload = getattr(exc, "payload", None)
+    if payload is not None:
+        return {"server_payload": payload, "error": str(exc)}
+    if len(exc.args) > 0:
+        return {"server_payload": exc.args[0], "error": str(exc)}
+    return {"error": str(exc)}
+
+
+def _coerce_mutation_fields(raw_fields: dict[str, str]) -> dict[str, Any]:
+    fields: dict[str, Any] = {}
+    for key, value in raw_fields.items():
+        fields[key] = parse_scalar(value)
+    return fields
+
+
+def _read_document_bytes(path_value: str, filename_override: str | None) -> tuple[bytes, str]:
+    path = Path(path_value).expanduser()
+    if not path.exists() or not path.is_file():
+        raise UsageValidationError(
+            "document must point to an existing file.",
+            details={"document": path_value},
+            error_code="INVALID_DOCUMENT_FILE",
+        )
+    return path.read_bytes(), filename_override or path.name
+
+
+async def _create_document(
+    client: Any,
+    *,
+    document_bytes: bytes,
+    filename: str,
+    fields: dict[str, Any],
+) -> int | str | tuple[int, int]:
+    if not getattr(client, "is_initialized", False) and hasattr(client, "initialize"):
+        await client.initialize()
+    draft = client.documents.draft(document=document_bytes, filename=filename)
+    for key, value in fields.items():
+        setattr(draft, key, value)
+    result = await draft.save()
+    return cast(int | str | tuple[int, int], result)
+
+
+def _create_document_sync(
+    client: Any,
+    *,
+    document_bytes: bytes,
+    filename: str,
+    fields: dict[str, Any],
+) -> int | str | tuple[int, int]:
+    return asyncio.run(
+        _create_document(
+            client,
+            document_bytes=document_bytes,
+            filename=filename,
+            fields=fields,
+        )
+    )
+
+
+async def _update_document(document: Any, *, only_changed: bool) -> bool:
+    return bool(await document.update(only_changed=only_changed))
+
+
+def _update_document_sync(document: Any, *, only_changed: bool) -> bool:
+    return asyncio.run(_update_document(document, only_changed=only_changed))
+
+
+async def _delete_document(document: Any) -> bool:
+    return bool(await document.delete())
+
+
+def _delete_document_sync(document: Any) -> bool:
+    return asyncio.run(_delete_document(document))
 
 
 async def _fetch_binary_document(
@@ -1387,6 +1466,178 @@ def docs_notes_delete(
         resource="docs",
         action="notes-delete",
         data={"deleted": True, "document_id": document_id, "note_id": note_id},
+        meta={"profile": runtime_context.profile},
+    )
+
+
+@app.command(
+    "create",
+    context_settings={"allow_extra_args": True, "ignore_unknown_options": True},
+)
+def docs_create(
+    ctx: typer.Context,
+    tokens: Annotated[
+        list[str] | None,
+        typer.Argument(help="Create fields. Requires document=<path>."),
+    ] = None,
+) -> None:
+    """Create a new document from a local file and metadata fields."""
+    updates, passthrough_fields = _parse_command_tokens(
+        raw_tokens=[*(tokens or []), *ctx.args],
+        known_option_keys=_CREATE_KNOWN_OPTION_KEYS,
+        command_label="create",
+        passthrough_filter_mode=True,
+    )
+
+    document_value = updates.get("document")
+    if document_value is None or not document_value.strip():
+        raise UsageValidationError(
+            "docs create requires document=<path>.",
+            error_code="MISSING_DOCUMENT_FILE",
+        )
+    document_bytes, filename = _read_document_bytes(document_value, updates.get("filename"))
+    fields = _coerce_mutation_fields(passthrough_fields)
+
+    global_options = GlobalOptions.from_updates(updates)
+    validate_raw_allowed(raw=global_options.raw, command_path="docs create")
+    client, runtime_context = create_client(global_options)
+    try:
+        result = _create_document_sync(
+            client,
+            document_bytes=document_bytes,
+            filename=filename,
+            fields=fields,
+        )
+    except Exception as exc:  # pragma: no cover - defensive mapping
+        raise PcliError(
+            "Document create failed.",
+            details=_mutation_error_details(exc),
+            error_code="DOC_CREATE_FAILED",
+        ) from exc
+
+    emit_success(
+        resource="docs",
+        action="create",
+        data={"result": result, "filename": filename},
+        meta={"profile": runtime_context.profile},
+    )
+
+
+@app.command(
+    "update",
+    context_settings={"allow_extra_args": True, "ignore_unknown_options": True},
+)
+def docs_update(
+    ctx: typer.Context,
+    document_id: Annotated[
+        int,
+        typer.Argument(help="Document ID."),
+    ],
+    tokens: Annotated[
+        list[str] | None,
+        typer.Argument(help="Update fields."),
+    ] = None,
+) -> None:
+    """Update fields on an existing document."""
+    updates, passthrough_fields = _parse_command_tokens(
+        raw_tokens=[*(tokens or []), *ctx.args],
+        known_option_keys=_UPDATE_KNOWN_OPTION_KEYS,
+        command_label="update",
+        passthrough_filter_mode=True,
+    )
+    if document_id <= 0:
+        raise UsageValidationError(
+            "document-id must be a positive integer.",
+            details={"document_id": document_id},
+            error_code="INVALID_DOCUMENT_ID",
+        )
+    if not passthrough_fields:
+        raise UsageValidationError(
+            "docs update requires at least one field=value assignment.",
+            error_code="MISSING_UPDATE_FIELDS",
+        )
+    only_changed = parse_bool(updates["only_changed"]) if "only_changed" in updates else True
+    fields = _coerce_mutation_fields(passthrough_fields)
+
+    global_options = GlobalOptions.from_updates(updates)
+    validate_raw_allowed(raw=global_options.raw, command_path="docs update")
+    client, runtime_context = create_client(global_options)
+    document = _fetch_document_sync(client, document_id)
+    for key, value in fields.items():
+        setattr(document, key, value)
+    try:
+        updated = _update_document_sync(document, only_changed=only_changed)
+    except Exception as exc:  # pragma: no cover - defensive mapping
+        raise PcliError(
+            "Document update failed.",
+            details=_mutation_error_details(exc),
+            error_code="DOC_UPDATE_FAILED",
+        ) from exc
+
+    emit_success(
+        resource="docs",
+        action="update",
+        data={
+            "updated": updated,
+            "document_id": document_id,
+            "only_changed": only_changed,
+        },
+        meta={"profile": runtime_context.profile},
+    )
+
+
+@app.command(
+    "delete",
+    context_settings={"allow_extra_args": True, "ignore_unknown_options": True},
+)
+def docs_delete(
+    ctx: typer.Context,
+    document_id: Annotated[
+        int,
+        typer.Argument(help="Document ID."),
+    ],
+    tokens: Annotated[
+        list[str] | None,
+        typer.Argument(help="Options including yes=true."),
+    ] = None,
+) -> None:
+    """Delete a document with explicit confirmation."""
+    updates, _ = _parse_command_tokens(
+        raw_tokens=[*(tokens or []), *ctx.args],
+        known_option_keys=_DELETE_KNOWN_OPTION_KEYS,
+        command_label="delete",
+        boolean_keys={"raw", "verbose", "yes"},
+    )
+    if document_id <= 0:
+        raise UsageValidationError(
+            "document-id must be a positive integer.",
+            details={"document_id": document_id},
+            error_code="INVALID_DOCUMENT_ID",
+        )
+    if not parse_bool(updates.get("yes", "false")):
+        raise UsageValidationError(
+            "docs delete requires yes=true.",
+            details={"yes": updates.get("yes")},
+            error_code="CONFIRMATION_REQUIRED",
+        )
+
+    global_options = GlobalOptions.from_updates(updates)
+    validate_raw_allowed(raw=global_options.raw, command_path="docs delete")
+    client, runtime_context = create_client(global_options)
+    document = _fetch_document_sync(client, document_id)
+    try:
+        deleted = _delete_document_sync(document)
+    except Exception as exc:  # pragma: no cover - defensive mapping
+        raise PcliError(
+            "Document delete failed.",
+            details=_mutation_error_details(exc),
+            error_code="DOC_DELETE_FAILED",
+        ) from exc
+
+    emit_success(
+        resource="docs",
+        action="delete",
+        data={"deleted": deleted, "document_id": document_id},
         meta={"profile": runtime_context.profile},
     )
 
