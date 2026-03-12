@@ -242,3 +242,126 @@ def test_docs_skim_respects_budget_controls(
     )
     assert by_pages.exit_code == 0
     assert json.loads(by_pages.output)["data"]["items"] == []
+
+
+def test_docs_skim_cursor_resume_returns_remaining_items(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def fake_create_client(options: Any) -> tuple[object, RuntimeContext]:
+        _ = options
+        return object(), RuntimeContext(profile="default", url="https://example", token="token")
+
+    def fake_collect(self: Any, client: Any, search: Any) -> list[FakeDocument]:
+        _ = (self, client, search)
+        return [
+            FakeDocument(
+                id=1,
+                content="invoice one invoice two",
+                created=dt.date(2026, 1, 1),
+            ),
+            FakeDocument(
+                id=2,
+                content="invoice three invoice four",
+                created=dt.date(2026, 1, 2),
+            ),
+        ]
+
+    monkeypatch.setattr(docs_cli, "create_client", fake_create_client)
+    monkeypatch.setattr(DocumentSearchAdapter, "collect_documents_sync", fake_collect)
+
+    first = runner.invoke(
+        app,
+        ["docs", "skim", "query=invoice", "max_hits_per_doc=2", "page_size=2"],
+    )
+    assert first.exit_code == 0
+    first_payload = json.loads(first.output)
+    assert len(first_payload["data"]["items"]) == 2
+    cursor = first_payload["meta"]["next_cursor"]
+    assert isinstance(cursor, str)
+
+    second = runner.invoke(
+        app,
+        [
+            "docs",
+            "skim",
+            "query=invoice",
+            "max_hits_per_doc=2",
+            "page_size=2",
+            f"cursor={cursor}",
+        ],
+    )
+    assert second.exit_code == 0
+    second_payload = json.loads(second.output)
+    assert len(second_payload["data"]["items"]) == 2
+    assert second_payload["meta"]["next_cursor"] is None
+
+
+def test_docs_skim_cursor_mismatch_and_page_conflict_are_rejected(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def fake_create_client(options: Any) -> tuple[object, RuntimeContext]:
+        _ = options
+        return object(), RuntimeContext(profile="default", url="https://example", token="token")
+
+    def fake_collect(self: Any, client: Any, search: Any) -> list[FakeDocument]:
+        _ = (self, client, search)
+        return [FakeDocument(id=1, content="invoice one invoice two", created=dt.date(2026, 1, 1))]
+
+    monkeypatch.setattr(docs_cli, "create_client", fake_create_client)
+    monkeypatch.setattr(DocumentSearchAdapter, "collect_documents_sync", fake_collect)
+
+    first = runner.invoke(
+        app,
+        ["docs", "skim", "query=invoice", "max_hits_per_doc=2", "page_size=1"],
+    )
+    cursor = json.loads(first.output)["meta"]["next_cursor"]
+    assert isinstance(cursor, str)
+
+    with pytest.raises(UsageValidationError) as mismatch:
+        runner.invoke(
+            app,
+            [
+                "docs",
+                "skim",
+                "query=contracts",
+                "max_hits_per_doc=2",
+                "page_size=1",
+                f"cursor={cursor}",
+            ],
+            catch_exceptions=False,
+        )
+    assert mismatch.value.payload.code == "CURSOR_MISMATCH"
+
+    with pytest.raises(UsageValidationError) as conflict:
+        runner.invoke(
+            app,
+            ["docs", "skim", "query=invoice", "cursor=abc", "page=2"],
+            catch_exceptions=False,
+        )
+    assert conflict.value.payload.code == "CURSOR_WITH_PAGE"
+
+
+def test_docs_skim_with_explicit_page_does_not_emit_resumable_cursor(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def fake_create_client(options: Any) -> tuple[object, RuntimeContext]:
+        _ = options
+        return object(), RuntimeContext(profile="default", url="https://example", token="token")
+
+    def fake_collect(self: Any, client: Any, search: Any) -> list[FakeDocument]:
+        _ = (self, client, search)
+        return [
+            FakeDocument(id=10, content="invoice one", created=dt.date(2026, 1, 10)),
+            FakeDocument(id=11, content="invoice two", created=dt.date(2026, 1, 11)),
+        ]
+
+    monkeypatch.setattr(docs_cli, "create_client", fake_create_client)
+    monkeypatch.setattr(DocumentSearchAdapter, "collect_documents_sync", fake_collect)
+
+    result = runner.invoke(
+        app,
+        ["docs", "skim", "query=invoice", "page=2", "page_size=1"],
+    )
+    assert result.exit_code == 0
+    payload = json.loads(result.output)
+    assert payload["meta"]["next_cursor"] is None
