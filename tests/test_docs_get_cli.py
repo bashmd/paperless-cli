@@ -23,6 +23,8 @@ class FakeDocument:
     title: str
     content: str
     page_count: int | None = None
+    archived_file_name: str | None = None
+    original_file_name: str | None = None
     _data: dict[str, Any] = field(default_factory=dict)
 
 
@@ -111,3 +113,109 @@ def test_root_get_alias_matches_docs_get(monkeypatch: pytest.MonkeyPatch) -> Non
 def test_docs_get_rejects_non_positive_document_id() -> None:
     with pytest.raises(UsageValidationError):
         runner.invoke(app, ["docs", "get", "0"], catch_exceptions=False)
+
+
+def test_docs_get_rejects_source_ocr_with_pages() -> None:
+    with pytest.raises(UsageValidationError) as exc:
+        runner.invoke(
+            app,
+            ["docs", "get", "7", "source=ocr", "pages=1-2"],
+            catch_exceptions=False,
+        )
+    assert exc.value.payload.code == "INVALID_SOURCE_WITH_PAGES"
+
+
+def test_docs_get_auto_with_pages_falls_back_to_archive_first(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def fake_create_client(options: Any) -> tuple[object, RuntimeContext]:
+        _ = options
+        return object(), RuntimeContext(profile="default", url="https://example", token="token")
+
+    def fake_fetch(client: Any, document_id: int) -> FakeDocument:
+        _ = client
+        return FakeDocument(
+            id=document_id,
+            title="Contract",
+            content="ocr text",
+            page_count=9,
+            archived_file_name="archive.pdf",
+            original_file_name="original.pdf",
+            _data={"id": document_id, "title": "Contract", "content": "ocr text", "page_count": 9},
+        )
+
+    monkeypatch.setattr(docs_cli, "create_client", fake_create_client)
+    monkeypatch.setattr(docs_cli, "_fetch_document_sync", fake_fetch)
+
+    with pytest.raises(UsageValidationError) as exc:
+        runner.invoke(
+            app,
+            ["docs", "get", "7", "pages=1-3", "max_pages=2", "source=auto"],
+            catch_exceptions=False,
+        )
+    assert exc.value.payload.code == "PAGE_EXTRACTION_UNAVAILABLE"
+    assert exc.value.payload.details["source"] == "archive"
+    assert exc.value.payload.details["pages"] == [1, 2]
+
+
+def test_docs_get_auto_with_pages_falls_back_to_original_when_archive_missing(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def fake_create_client(options: Any) -> tuple[object, RuntimeContext]:
+        _ = options
+        return object(), RuntimeContext(profile="default", url="https://example", token="token")
+
+    def fake_fetch(client: Any, document_id: int) -> FakeDocument:
+        _ = client
+        return FakeDocument(
+            id=document_id,
+            title="Photo",
+            content="ocr text",
+            page_count=2,
+            archived_file_name=None,
+            original_file_name="scan.jpg",
+            _data={"id": document_id, "title": "Photo", "content": "ocr text", "page_count": 2},
+        )
+
+    monkeypatch.setattr(docs_cli, "create_client", fake_create_client)
+    monkeypatch.setattr(docs_cli, "_fetch_document_sync", fake_fetch)
+
+    with pytest.raises(UsageValidationError) as exc:
+        runner.invoke(
+            app,
+            ["docs", "get", "12", "pages=2", "source=auto"],
+            catch_exceptions=False,
+        )
+    assert exc.value.payload.code == "PAGE_EXTRACTION_UNAVAILABLE"
+    assert exc.value.payload.details["source"] == "original"
+
+
+def test_docs_get_returns_clear_error_when_requested_source_unavailable(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def fake_create_client(options: Any) -> tuple[object, RuntimeContext]:
+        _ = options
+        return object(), RuntimeContext(profile="default", url="https://example", token="token")
+
+    def fake_fetch(client: Any, document_id: int) -> FakeDocument:
+        _ = client
+        return FakeDocument(
+            id=document_id,
+            title="Doc",
+            content="ocr text",
+            page_count=1,
+            archived_file_name=None,
+            original_file_name=None,
+            _data={"id": document_id, "title": "Doc", "content": "ocr text", "page_count": 1},
+        )
+
+    monkeypatch.setattr(docs_cli, "create_client", fake_create_client)
+    monkeypatch.setattr(docs_cli, "_fetch_document_sync", fake_fetch)
+
+    with pytest.raises(UsageValidationError) as exc:
+        runner.invoke(
+            app,
+            ["docs", "get", "19", "pages=1", "source=auto"],
+            catch_exceptions=False,
+        )
+    assert exc.value.payload.code == "SOURCE_UNAVAILABLE"

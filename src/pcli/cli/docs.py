@@ -20,7 +20,9 @@ from pcli.core.cursor import decode_cursor, encode_cursor
 from pcli.core.errors import UsageValidationError
 from pcli.core.options import FormatMode, GlobalOptions, parse_bool, parse_scalar
 from pcli.core.output import ndjson_item, ndjson_summary
+from pcli.core.page_spec import normalize_page_selection
 from pcli.core.parsing import parse_tokens
+from pcli.core.retrieval_source import parse_retrieval_source, resolve_source_candidates
 from pcli.core.validation import validate_raw_allowed
 from pcli.models.discovery import DEFAULT_DISCOVERY_SORT, canonicalize_document_search
 
@@ -74,6 +76,9 @@ _FACETS_KNOWN_OPTION_KEYS = _FIND_KNOWN_OPTION_KEYS | {"by", "facet_scope", "top
 _DEFAULT_FACET_SCOPE = "page"
 _DEFAULT_TOP_VALUES = 20
 _GET_KNOWN_OPTION_KEYS = {
+    "pages",
+    "max_pages",
+    "source",
     "url",
     "token",
     "profile",
@@ -514,6 +519,17 @@ def _fetch_document_sync(client: Any, document_id: int) -> Any:
     return asyncio.run(_fetch_document(client, document_id))
 
 
+def _available_retrieval_sources(document: Any) -> set[str]:
+    sources: set[str] = {"ocr"}
+    archive_name = getattr(document, "archived_file_name", None)
+    if isinstance(archive_name, str) and archive_name.strip():
+        sources.add("archive")
+    original_name = getattr(document, "original_file_name", None)
+    if isinstance(original_name, str) and original_name.strip():
+        sources.add("original")
+    return sources
+
+
 def _parse_by_fields(value: str | None) -> list[str]:
     if value is None:
         raise UsageValidationError(
@@ -654,11 +670,57 @@ def docs_get(
             details={"document_id": document_id},
             error_code="INVALID_DOCUMENT_ID",
         )
+    selected_pages = normalize_page_selection(
+        pages=parsed.updates.get("pages"),
+        max_pages=parsed.updates.get("max_pages"),
+    )
+    requested_source = parse_retrieval_source(parsed.updates.get("source"))
+    if selected_pages is not None and requested_source == "ocr":
+        raise UsageValidationError(
+            "source=ocr cannot be combined with pages=...",
+            details={"source": "ocr", "pages": selected_pages},
+            error_code="INVALID_SOURCE_WITH_PAGES",
+        )
 
     global_options = GlobalOptions.from_updates(parsed.updates)
     validate_raw_allowed(raw=global_options.raw, command_path="docs get")
     client, runtime_context = create_client(global_options)
     document = _fetch_document_sync(client, document_id)
+
+    source_candidates = resolve_source_candidates(
+        source=requested_source,
+        has_page_filter=selected_pages is not None,
+    )
+    available_sources = _available_retrieval_sources(document)
+    resolved_source: str | None = None
+    for candidate in source_candidates:
+        if candidate in available_sources:
+            resolved_source = candidate
+            break
+    if resolved_source is None:
+        raise UsageValidationError(
+            "No usable retrieval source is available for this document.",
+            details={
+                "requested_source": requested_source,
+                "candidates": source_candidates,
+                "available_sources": sorted(available_sources),
+            },
+            error_code="SOURCE_UNAVAILABLE",
+        )
+    if resolved_source != "ocr":
+        raise UsageValidationError(
+            "File-based extraction is not available yet for this source.",
+            details={
+                "source": resolved_source,
+                "pages": selected_pages,
+                "candidates": source_candidates,
+            },
+            error_code=(
+                "PAGE_EXTRACTION_UNAVAILABLE"
+                if selected_pages is not None
+                else "SOURCE_NOT_SUPPORTED"
+            ),
+        )
 
     text = getattr(document, "content", None)
     content_text = text if isinstance(text, str) else ""
@@ -670,8 +732,8 @@ def docs_get(
         data={
             "document": _serialize_document(document),
             "text": content_text,
-            "pages": None,
-            "source": "ocr",
+            "pages": selected_pages,
+            "source": resolved_source,
             "truncated": False,
         },
         meta={
