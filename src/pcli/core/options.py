@@ -13,6 +13,7 @@ from pcli.core.errors import UsageValidationError
 class FormatMode(StrEnum):
     """Supported output formats."""
 
+    RG = "rg"
     JSON = "json"
     TEXT = "text"
     NDJSON = "ndjson"

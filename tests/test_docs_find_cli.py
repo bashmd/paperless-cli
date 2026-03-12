@@ -41,6 +41,37 @@ def test_docs_find_requires_query() -> None:
         runner.invoke(app, ["docs", "find"], catch_exceptions=False)
 
 
+def test_docs_find_defaults_to_ripgrep_style_output(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def fake_create_client(options: Any) -> tuple[object, RuntimeContext]:
+        _ = options
+        return object(), RuntimeContext(profile="default", url="https://example", token="token")
+
+    def fake_collect(self: Any, client: Any, search: Any) -> list[FakeDocument]:
+        _ = (self, client, search)
+        return [
+            FakeDocument(
+                id=5,
+                title="Invoice May",
+                created=dt.date(2026, 5, 1),
+                search_hit=FakeSearchHit(score=0.8, highlights="alpha <span>invoice</span> beta"),
+                content="",
+            )
+        ]
+
+    monkeypatch.setattr(docs_cli, "create_client", fake_create_client)
+    monkeypatch.setattr(DocumentSearchAdapter, "collect_documents_sync", fake_collect)
+
+    result = runner.invoke(app, ["docs", "find", "query=invoice", "max_docs=1"])
+    assert result.exit_code == 0
+    lines = [line for line in result.output.splitlines() if line.strip()]
+    assert lines[0].startswith("5 ")
+    assert "Invoice May" in lines[0]
+    assert "alpha invoice beta" in lines[0]
+    assert lines[-1].startswith("# summary ")
+
+
 def test_docs_find_returns_sorted_projected_rows(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -78,6 +109,7 @@ def test_docs_find_returns_sorted_projected_rows(
         [
             "docs",
             "find",
+            "format=json",
             "query=invoice",
             "top=2",
             "fields=id,title,created,score,snippet",
@@ -125,7 +157,7 @@ def test_docs_find_supports_long_option_style(
 
     result = runner.invoke(
         app,
-        ["docs", "find", "--query", "invoice", "--max_docs", "1", "--fields", "id"],
+        ["docs", "find", "format=json", "--query", "invoice", "--max_docs", "1", "--fields", "id"],
     )
     assert result.exit_code == 0
     payload = json.loads(result.output)
@@ -165,7 +197,7 @@ def test_docs_find_honors_explicit_sort_without_local_resort(
 
     result = runner.invoke(
         app,
-        ["docs", "find", "query=invoice", "sort=created", "fields=id,score"],
+        ["docs", "find", "format=json", "query=invoice", "sort=created", "fields=id,score"],
     )
     assert result.exit_code == 0
     payload = json.loads(result.output)
@@ -176,7 +208,7 @@ def test_docs_find_rejects_raw_true_for_non_binary_command() -> None:
     with pytest.raises(UsageValidationError):
         runner.invoke(
             app,
-            ["docs", "find", "query=invoice", "raw=true"],
+            ["docs", "find", "format=json", "query=invoice", "raw=true"],
             catch_exceptions=False,
         )
 
@@ -212,7 +244,7 @@ def test_docs_find_ids_only_mode_emits_id_rows(
 
     result = runner.invoke(
         app,
-        ["docs", "find", "query=invoice", "ids_only=true", "fields=title,created"],
+        ["docs", "find", "format=json", "query=invoice", "ids_only=true", "fields=title,created"],
     )
     assert result.exit_code == 0
     payload = json.loads(result.output)
@@ -251,7 +283,7 @@ def test_docs_find_ids_only_mode_emits_chainable_ndjson(
 
     result = runner.invoke(
         app,
-        ["docs", "find", "query=invoice", "ids_only=true", "format=ndjson"],
+        ["docs", "find", "format=json", "query=invoice", "ids_only=true", "format=ndjson"],
     )
     assert result.exit_code == 0
 
@@ -265,7 +297,7 @@ def test_docs_find_rejects_unexpected_positional_token() -> None:
     with pytest.raises(UsageValidationError):
         runner.invoke(
             app,
-            ["docs", "find", "query=invoice", "unexpected"],
+            ["docs", "find", "format=json", "query=invoice", "unexpected"],
             catch_exceptions=False,
         )
 
@@ -301,21 +333,28 @@ def test_docs_find_respects_budget_controls(
 
     by_stop = runner.invoke(
         app,
-        ["docs", "find", "query=invoice", "stop_after_matches=1", "fields=id,snippet"],
+        [
+            "docs",
+            "find",
+            "format=json",
+            "query=invoice",
+            "stop_after_matches=1",
+            "fields=id,snippet",
+        ],
     )
     assert by_stop.exit_code == 0
     assert len(json.loads(by_stop.output)["data"]["items"]) == 1
 
     by_chars = runner.invoke(
         app,
-        ["docs", "find", "query=invoice", "max_chars_total=5", "fields=id,snippet"],
+        ["docs", "find", "format=json", "query=invoice", "max_chars_total=5", "fields=id,snippet"],
     )
     assert by_chars.exit_code == 0
     assert json.loads(by_chars.output)["data"]["items"] == []
 
     by_pages = runner.invoke(
         app,
-        ["docs", "find", "query=invoice", "max_pages_total=1"],
+        ["docs", "find", "format=json", "query=invoice", "max_pages_total=1"],
     )
     assert by_pages.exit_code == 0
     assert json.loads(by_pages.output)["data"]["items"] == []
@@ -346,6 +385,7 @@ def test_docs_find_alias_precedence_prefers_max_docs_over_top(
         [
             "docs",
             "find",
+            "format=json",
             "query=invoice",
             "max_docs=1",
             "top=2",
@@ -383,6 +423,7 @@ def test_docs_find_cursor_resume_in_ndjson_mode(
         [
             "docs",
             "find",
+            "format=json",
             "query=invoice",
             "ids_only=true",
             "format=ndjson",
@@ -401,6 +442,7 @@ def test_docs_find_cursor_resume_in_ndjson_mode(
         [
             "docs",
             "find",
+            "format=json",
             "query=invoice",
             "ids_only=true",
             "format=ndjson",
@@ -433,7 +475,15 @@ def test_docs_find_cursor_mismatch_and_page_conflict_are_rejected(
 
     first = runner.invoke(
         app,
-        ["docs", "find", "query=invoice", "ids_only=true", "format=ndjson", "page_size=1"],
+        [
+            "docs",
+            "find",
+            "format=json",
+            "query=invoice",
+            "ids_only=true",
+            "format=ndjson",
+            "page_size=1",
+        ],
     )
     cursor = json.loads(first.output.splitlines()[-1])["meta"]["next_cursor"]
     assert isinstance(cursor, str)
@@ -457,7 +507,7 @@ def test_docs_find_cursor_mismatch_and_page_conflict_are_rejected(
     with pytest.raises(UsageValidationError) as conflict:
         runner.invoke(
             app,
-            ["docs", "find", "query=invoice", "cursor=abc", "page=2"],
+            ["docs", "find", "format=json", "query=invoice", "cursor=abc", "page=2"],
             catch_exceptions=False,
         )
     assert conflict.value.payload.code == "CURSOR_WITH_PAGE"
@@ -485,6 +535,7 @@ def test_docs_find_with_explicit_page_does_not_emit_resumable_cursor(
         [
             "docs",
             "find",
+            "format=json",
             "query=invoice",
             "format=ndjson",
             "page=2",

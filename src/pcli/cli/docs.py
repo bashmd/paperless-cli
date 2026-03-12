@@ -177,6 +177,159 @@ _FACET_FIELD_MAP = {
     "correspondent": "correspondent",
     "year": "year",
 }
+_RG_HIGHLIGHT_RE = re.compile(r"<[^>]+>")
+
+
+def _rg_clean_text(value: str) -> str:
+    return _normalize_whitespace(_RG_HIGHLIGHT_RE.sub("", value))
+
+
+def _rg_scalar(value: Any) -> str:
+    if value is None:
+        return "-"
+    if isinstance(value, (dt.date, dt.datetime)):
+        return value.isoformat()
+    if isinstance(value, bool):
+        return "true" if value else "false"
+    if isinstance(value, (int, float)):
+        return str(value)
+    if isinstance(value, str):
+        cleaned = _rg_clean_text(value)
+        return cleaned if cleaned else "-"
+    if isinstance(value, list):
+        return ",".join(_rg_scalar(item) for item in value)
+    if isinstance(value, dict):
+        return ",".join(f"{key}:{_rg_scalar(item)}" for key, item in value.items())
+    return str(value)
+
+
+def _rg_summary_value(value: Any) -> str:
+    rendered = _rg_scalar(value)
+    if any(char.isspace() for char in rendered):
+        return json.dumps(rendered, ensure_ascii=True)
+    return rendered
+
+
+def _rg_summary_line(**meta: Any) -> str:
+    items = [f"{key}={_rg_summary_value(value)}" for key, value in meta.items()]
+    return "# summary " + " ".join(items)
+
+
+def _rg_find_line(row: dict[str, Any], *, ids_only: bool) -> str:
+    if ids_only:
+        return str(row.get("id", "-"))
+
+    line_parts: list[str] = []
+    doc_id = row.get("id")
+    if doc_id is not None:
+        line_parts.append(str(doc_id))
+
+    bracket_parts: list[str] = []
+    for key in ("added", "created", "modified"):
+        if key in row and row.get(key) is not None:
+            bracket_parts.append(f"{key}={_rg_scalar(row[key])}")
+    if row.get("page_count") is not None:
+        bracket_parts.append(f"p={_rg_scalar(row['page_count'])}")
+    if row.get("score") is not None:
+        bracket_parts.append(f"score={_rg_scalar(row['score'])}")
+    if bracket_parts:
+        line_parts.append(f"[{' '.join(bracket_parts)}]")
+
+    title = row.get("title")
+    if title is not None:
+        line_parts.append(_rg_scalar(title))
+
+    line = " ".join(line_parts).strip()
+    if not line:
+        line = _rg_scalar(row)
+
+    snippet = row.get("snippet")
+    if isinstance(snippet, str) and snippet.strip():
+        line += f" | {_rg_scalar(snippet)}"
+
+    shown_keys = {
+        "id",
+        "title",
+        "snippet",
+        "added",
+        "created",
+        "modified",
+        "page_count",
+        "score",
+    }
+    extras = [
+        f"{key}={_rg_summary_value(value)}" for key, value in row.items() if key not in shown_keys
+    ]
+    if extras:
+        line += f" | {' '.join(extras)}"
+    return line
+
+
+def _rg_peek_line(row: dict[str, Any]) -> str:
+    line_parts: list[str] = []
+    doc_id = row.get("id")
+    if doc_id is not None:
+        line_parts.append(str(doc_id))
+
+    bracket_parts: list[str] = []
+    for key in ("added", "created", "modified"):
+        if key in row and row.get(key) is not None:
+            bracket_parts.append(f"{key}={_rg_scalar(row[key])}")
+    if row.get("page_count") is not None:
+        bracket_parts.append(f"p={_rg_scalar(row['page_count'])}")
+    bracket_parts.append(f"chars={_rg_scalar(row.get('chars'))}")
+    truncated = row.get("truncated")
+    if isinstance(truncated, bool):
+        bracket_parts.append(f"trunc={1 if truncated else 0}")
+    if bracket_parts:
+        line_parts.append(f"[{' '.join(bracket_parts)}]")
+
+    title = row.get("title")
+    if title is not None:
+        line_parts.append(_rg_scalar(title))
+    line = " ".join(line_parts).strip()
+    if not line:
+        line = _rg_scalar(row)
+
+    excerpt = row.get("excerpt")
+    if isinstance(excerpt, str) and excerpt.strip():
+        line += f" | {_rg_scalar(excerpt)}"
+
+    shown_keys = {
+        "id",
+        "title",
+        "excerpt",
+        "added",
+        "created",
+        "modified",
+        "page_count",
+        "chars",
+        "truncated",
+    }
+    extras = [
+        f"{key}={_rg_summary_value(value)}" for key, value in row.items() if key not in shown_keys
+    ]
+    if extras:
+        line += f" | {' '.join(extras)}"
+    return line
+
+
+def _rg_skim_lines(item: dict[str, Any]) -> list[str]:
+    doc_id = _rg_scalar(item.get("doc_id"))
+    page_value = item.get("page")
+    page = str(page_value) if isinstance(page_value, int) and page_value > 0 else "-"
+    start = _rg_scalar(item.get("start"))
+    end = _rg_scalar(item.get("end"))
+    head = f"{doc_id}:{page}:{start}-{end}"
+    hit = item.get("hit")
+    if hit is not None:
+        head += f" {_rg_scalar(hit)}"
+
+    lines = [head]
+    text = item.get("text")
+    if isinstance(text, str) and text.strip():
+        lines.append(f"    {_rg_scalar(text)}")
+    return lines
 
 def _parse_fields(value: str | None, *, default_fields: list[str]) -> list[str]:
     if value is None:
@@ -2023,6 +2176,8 @@ def docs_find(
     )
 
     global_options = GlobalOptions.from_updates(parsed.updates)
+    if "format" not in parsed.updates:
+        global_options.format_mode = FormatMode.RG
     validate_raw_allowed(raw=global_options.raw, command_path="docs find")
 
     client, runtime_context = create_client(global_options)
@@ -2069,6 +2224,27 @@ def docs_find(
     if explicit_page:
         next_cursor = None
 
+    if global_options.format_mode is FormatMode.RG:
+        for row in paged_rows:
+            typer.echo(_rg_find_line(row, ids_only=ids_only))
+        typer.echo(
+            _rg_summary_line(
+                count=len(paged_rows),
+                total_matches=len(rows),
+                page=search.page,
+                page_size=search.page_size,
+                max_docs=search.max_docs,
+                query=search.query,
+                sort=search.sort,
+                ids_only=ids_only,
+                pages_used=pages_used,
+                chars_used=chars_used,
+                matches=matches,
+                next_cursor=next_cursor,
+                profile=runtime_context.profile,
+            )
+        )
+        return
     if global_options.format_mode is FormatMode.NDJSON:
         for row in paged_rows:
             typer.echo(ndjson_item(row))
@@ -2204,9 +2380,32 @@ def docs_peek(
     )
 
     global_options = GlobalOptions.from_updates(parsed.updates)
+    if "format" not in parsed.updates:
+        global_options.format_mode = FormatMode.RG
     validate_raw_allowed(raw=global_options.raw, command_path="docs peek")
 
     if from_stdin and not selected_ids:
+        profile = global_options.profile or "default"
+        if global_options.format_mode is FormatMode.RG:
+            typer.echo(
+                _rg_summary_line(
+                    count=0,
+                    total_matches=0,
+                    max_docs=0,
+                    per_doc_max_chars=per_doc_max_chars,
+                    pages_used=0,
+                    chars_used=0,
+                    matches=0,
+                    from_stdin=True,
+                    query=search.query,
+                    next_cursor=None,
+                    profile=profile,
+                )
+            )
+            return
+        if global_options.format_mode is FormatMode.NDJSON:
+            typer.echo(ndjson_summary(next_cursor=None))
+            return
         emit_success(
             resource="docs",
             action="peek",
@@ -2221,7 +2420,7 @@ def docs_peek(
                 "from_stdin": True,
                 "query": search.query,
                 "next_cursor": None,
-                "profile": global_options.profile or "default",
+                "profile": profile,
             },
         )
         return
@@ -2275,6 +2474,31 @@ def docs_peek(
     )
     if explicit_page:
         next_cursor = None
+
+    if global_options.format_mode is FormatMode.RG:
+        for row in paged_rows:
+            typer.echo(_rg_peek_line(row))
+        typer.echo(
+            _rg_summary_line(
+                count=len(paged_rows),
+                total_matches=len(rows),
+                max_docs=search.max_docs,
+                per_doc_max_chars=per_doc_max_chars,
+                pages_used=pages_used,
+                chars_used=chars_used,
+                matches=matches,
+                from_stdin=from_stdin,
+                query=search.query,
+                next_cursor=next_cursor,
+                profile=runtime_context.profile,
+            )
+        )
+        return
+    if global_options.format_mode is FormatMode.NDJSON:
+        for row in paged_rows:
+            typer.echo(ndjson_item(row))
+        typer.echo(ndjson_summary(next_cursor=next_cursor))
+        return
 
     emit_success(
         resource="docs",
@@ -2413,9 +2637,36 @@ def docs_skim(
     )
 
     global_options = GlobalOptions.from_updates(parsed.updates)
+    if "format" not in parsed.updates:
+        global_options.format_mode = FormatMode.RG
     validate_raw_allowed(raw=global_options.raw, command_path="docs skim")
 
     if from_stdin and not selected_ids:
+        profile = global_options.profile or "default"
+        if global_options.format_mode is FormatMode.RG:
+            typer.echo(
+                _rg_summary_line(
+                    count=0,
+                    total_matches=0,
+                    docs_scanned=0,
+                    docs_with_hits=0,
+                    max_docs=search.max_docs,
+                    max_hits_per_doc=max_hits_per_doc,
+                    context_before=context_before,
+                    context_after=context_after,
+                    pages_used=0,
+                    chars_used=0,
+                    matches=0,
+                    query=search.query,
+                    from_stdin=True,
+                    next_cursor=None,
+                    profile=profile,
+                )
+            )
+            return
+        if global_options.format_mode is FormatMode.NDJSON:
+            typer.echo(ndjson_summary(next_cursor=None))
+            return
         emit_success(
             resource="docs",
             action="skim",
@@ -2434,7 +2685,7 @@ def docs_skim(
                 "query": search.query,
                 "from_stdin": True,
                 "next_cursor": None,
-                "profile": global_options.profile or "default",
+                "profile": profile,
             },
         )
         return
@@ -2492,6 +2743,38 @@ def docs_skim(
     )
     if explicit_page:
         next_cursor = None
+
+    if global_options.format_mode is FormatMode.RG:
+        for item in paged_items:
+            for line in _rg_skim_lines(item):
+                typer.echo(line)
+        if paged_items:
+            typer.echo("--")
+        typer.echo(
+            _rg_summary_line(
+                count=len(paged_items),
+                total_matches=len(items),
+                docs_scanned=docs_scanned,
+                docs_with_hits=docs_with_hits,
+                max_docs=search.max_docs,
+                max_hits_per_doc=max_hits_per_doc,
+                context_before=context_before,
+                context_after=context_after,
+                pages_used=pages_used,
+                chars_used=chars_used,
+                matches=len(items),
+                query=search.query,
+                from_stdin=from_stdin,
+                next_cursor=next_cursor,
+                profile=runtime_context.profile,
+            )
+        )
+        return
+    if global_options.format_mode is FormatMode.NDJSON:
+        for item in paged_items:
+            typer.echo(ndjson_item(item))
+        typer.echo(ndjson_summary(next_cursor=next_cursor))
+        return
 
     emit_success(
         resource="docs",

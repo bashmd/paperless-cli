@@ -38,7 +38,7 @@ This is the minimum loop needed to handle huge corpora without pulling full docu
 1. Predictable shape: `pcli <resource> <action> ...`
 2. Document shortcut: `pcli get <document-id>` maps to `pcli docs get <document-id>`.
 3. LLM-friendly args: support both long flags and trailing `key=value`.
-4. Default machine output: JSON (`ndjson` for streaming scans).
+4. Discovery default output is ripgrep-style text (`format=rg`), with `json`/`ndjson` available.
 5. Same names everywhere:
    - `id` for primary keys
    - `page`, `page_size`
@@ -73,7 +73,7 @@ pcli [global-options] get <document-id> [key=value...]
 ```text
 url=<base-url> | --url <base-url>
 profile=<name> | --profile <name>
-format=json|text|ndjson | --format ...
+format=rg|json|text|ndjson | --format ...
 raw=true|false | --raw
 verbose=true|false | --verbose
 timeout=<seconds> | --timeout <seconds>
@@ -85,7 +85,7 @@ timeout=<seconds> | --timeout <seconds>
 
 1. `format=text` is for human-readable summaries only.
 2. `format=text` is not stable for machine parsing.
-3. `json` and `ndjson` remain the contract modes for tool calling.
+3. `rg` is optimized for scan/readability; `json` and `ndjson` remain available for structured tooling.
 
 `raw` semantics:
 

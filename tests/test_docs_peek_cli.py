@@ -34,6 +34,36 @@ def test_docs_peek_requires_selector() -> None:
         runner.invoke(app, ["docs", "peek"], catch_exceptions=False)
 
 
+def test_docs_peek_defaults_to_ripgrep_style_output(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def fake_create_client(options: Any) -> tuple[object, RuntimeContext]:
+        _ = options
+        return object(), RuntimeContext(profile="default", url="https://example", token="token")
+
+    def fake_collect(self: Any, client: Any, search: Any) -> list[FakeDocument]:
+        _ = (self, client, search)
+        return [
+            FakeDocument(
+                id=2,
+                title="Second",
+                created=dt.date(2026, 1, 2),
+                content="second document preview content",
+            )
+        ]
+
+    monkeypatch.setattr(docs_cli, "create_client", fake_create_client)
+    monkeypatch.setattr(DocumentSearchAdapter, "collect_documents_sync", fake_collect)
+
+    result = runner.invoke(app, ["docs", "peek", "ids=2", "max_docs=1"])
+    assert result.exit_code == 0
+    lines = [line for line in result.output.splitlines() if line.strip()]
+    assert lines[0].startswith("2 ")
+    assert "Second" in lines[0]
+    assert "second document preview content" in lines[0]
+    assert lines[-1].startswith("# summary ")
+
+
 def test_docs_peek_supports_ids_and_excerpt_truncation(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -66,7 +96,7 @@ def test_docs_peek_supports_ids_and_excerpt_truncation(
 
     result = runner.invoke(
         app,
-        ["docs", "peek", "ids=2,1", "fields=id,title,excerpt", "max_chars=10"],
+        ["docs", "peek", "format=json", "ids=2,1", "fields=id,title,excerpt", "max_chars=10"],
     )
     assert result.exit_code == 0
     payload = json.loads(result.output)
@@ -118,7 +148,7 @@ def test_docs_peek_supports_from_stdin_ids(
     )
     result = runner.invoke(
         app,
-        ["docs", "peek", "from_stdin=true", "fields=id"],
+        ["docs", "peek", "format=json", "from_stdin=true", "fields=id"],
         input=stdin_payload,
     )
     assert result.exit_code == 0
@@ -137,7 +167,7 @@ def test_docs_peek_from_stdin_empty_source_returns_empty_success(
     monkeypatch.setattr(docs_cli, "create_client", fail_create_client)
     result = runner.invoke(
         app,
-        ["docs", "peek", "from_stdin=true"],
+        ["docs", "peek", "format=json", "from_stdin=true"],
         input='{"type":"summary","meta":{"next_cursor":null}}\n\n',
     )
     assert result.exit_code == 0
@@ -156,7 +186,7 @@ def test_docs_peek_from_stdin_empty_with_query_returns_empty_success(
     monkeypatch.setattr(docs_cli, "create_client", fail_create_client)
     result = runner.invoke(
         app,
-        ["docs", "peek", "from_stdin=true", "query=invoice"],
+        ["docs", "peek", "format=json", "from_stdin=true", "query=invoice"],
         input='{"type":"summary","meta":{"next_cursor":null}}\n',
     )
     assert result.exit_code == 0
@@ -190,7 +220,14 @@ def test_docs_peek_small_max_chars_never_exceeds_limit(
 
     result = runner.invoke(
         app,
-        ["docs", "peek", "ids=1", f"per_doc_max_chars={max_chars}", "fields=excerpt"],
+        [
+            "docs",
+            "peek",
+            "format=json",
+            "ids=1",
+            f"per_doc_max_chars={max_chars}",
+            "fields=excerpt",
+        ],
     )
     assert result.exit_code == 0
     payload = json.loads(result.output)
@@ -204,19 +241,19 @@ def test_docs_peek_rejects_mutually_exclusive_selector_and_raw_true() -> None:
     with pytest.raises(UsageValidationError):
         runner.invoke(
             app,
-            ["docs", "peek", "ids=1,2", "from_stdin=true"],
+            ["docs", "peek", "format=json", "ids=1,2", "from_stdin=true"],
             catch_exceptions=False,
         )
     with pytest.raises(UsageValidationError):
         runner.invoke(
             app,
-            ["docs", "peek", "query=invoice", "raw=true"],
+            ["docs", "peek", "format=json", "query=invoice", "raw=true"],
             catch_exceptions=False,
         )
     with pytest.raises(UsageValidationError):
         runner.invoke(
             app,
-            ["docs", "peek", "from_stdin=true", "cursor=abc"],
+            ["docs", "peek", "format=json", "from_stdin=true", "cursor=abc"],
             input='{"type":"item","id":1}\n',
             catch_exceptions=False,
         )
@@ -253,21 +290,28 @@ def test_docs_peek_respects_budget_controls(
 
     by_stop = runner.invoke(
         app,
-        ["docs", "peek", "query=invoice", "stop_after_matches=1", "fields=id,excerpt"],
+        [
+            "docs",
+            "peek",
+            "format=json",
+            "query=invoice",
+            "stop_after_matches=1",
+            "fields=id,excerpt",
+        ],
     )
     assert by_stop.exit_code == 0
     assert len(json.loads(by_stop.output)["data"]["items"]) == 1
 
     by_chars = runner.invoke(
         app,
-        ["docs", "peek", "query=invoice", "max_chars_total=5", "fields=id,excerpt"],
+        ["docs", "peek", "format=json", "query=invoice", "max_chars_total=5", "fields=id,excerpt"],
     )
     assert by_chars.exit_code == 0
     assert json.loads(by_chars.output)["data"]["items"] == []
 
     by_pages = runner.invoke(
         app,
-        ["docs", "peek", "query=invoice", "max_pages_total=1", "fields=id,excerpt"],
+        ["docs", "peek", "format=json", "query=invoice", "max_pages_total=1", "fields=id,excerpt"],
     )
     assert by_pages.exit_code == 0
     assert json.loads(by_pages.output)["data"]["items"] == []
@@ -292,6 +336,7 @@ def test_docs_peek_alias_precedence_prefers_per_doc_max_chars(
         [
             "docs",
             "peek",
+            "format=json",
             "ids=1",
             "per_doc_max_chars=4",
             "max_chars=10",
@@ -339,7 +384,7 @@ def test_docs_peek_cursor_resume_returns_remaining_items(
 
     first = runner.invoke(
         app,
-        ["docs", "peek", "query=invoice", "fields=id,excerpt", "page_size=2"],
+        ["docs", "peek", "format=json", "query=invoice", "fields=id,excerpt", "page_size=2"],
     )
     assert first.exit_code == 0
     first_payload = json.loads(first.output)
@@ -352,6 +397,7 @@ def test_docs_peek_cursor_resume_returns_remaining_items(
         [
             "docs",
             "peek",
+            "format=json",
             "query=invoice",
             "fields=id,excerpt",
             "page_size=2",
@@ -383,7 +429,7 @@ def test_docs_peek_cursor_mismatch_and_page_conflict_are_rejected(
 
     first = runner.invoke(
         app,
-        ["docs", "peek", "query=invoice", "fields=id,excerpt", "page_size=1"],
+        ["docs", "peek", "format=json", "query=invoice", "fields=id,excerpt", "page_size=1"],
     )
     cursor = json.loads(first.output)["meta"]["next_cursor"]
     assert isinstance(cursor, str)
@@ -406,7 +452,15 @@ def test_docs_peek_cursor_mismatch_and_page_conflict_are_rejected(
     with pytest.raises(UsageValidationError) as conflict:
         runner.invoke(
             app,
-            ["docs", "peek", "query=invoice", "fields=id,excerpt", "cursor=abc", "page=2"],
+            [
+                "docs",
+                "peek",
+                "format=json",
+                "query=invoice",
+                "fields=id,excerpt",
+                "cursor=abc",
+                "page=2",
+            ],
             catch_exceptions=False,
         )
     assert conflict.value.payload.code == "CURSOR_WITH_PAGE"
@@ -436,7 +490,15 @@ def test_docs_peek_with_explicit_page_does_not_emit_resumable_cursor(
 
     result = runner.invoke(
         app,
-        ["docs", "peek", "query=invoice", "fields=id,excerpt", "page=2", "page_size=1"],
+        [
+            "docs",
+            "peek",
+            "format=json",
+            "query=invoice",
+            "fields=id,excerpt",
+            "page=2",
+            "page_size=1",
+        ],
     )
     assert result.exit_code == 0
     payload = json.loads(result.output)

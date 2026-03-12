@@ -10,7 +10,7 @@ Implement `pcli` in phased increments so each phase is shippable and testable, w
 ## 2. Global Acceptance Criteria
 
 1. All implemented commands conform to grammar and option behavior defined in `plan.md`.
-2. Contract modes `format=json` and `format=ndjson` are stable and tested.
+2. Contract modes `format=rg`, `format=json`, and `format=ndjson` are stable and tested.
 3. Exit codes are deterministic (`0/2/3/4/5/6/7`) and mapped consistently.
 4. Python runtime baseline is `>=3.12,<3.15`.
 5. No phase merges without automated tests for new behavior.
@@ -64,6 +64,7 @@ Implement `pcli` in phased increments so each phase is shippable and testable, w
 - [x] `P6-T5` Add release checklist and versioning notes.
 - [x] `OPT-T1` Integrate optional Rust whitespace normalizer with safe Python fallback.
 - [x] `OPT-T2` Re-benchmark and re-profile discovery hot paths after Rust integration.
+- [x] `OPT-T3` Add ripgrep-style (`format=rg`) discovery output and make it default for find/peek/skim.
 
 ## 3. Phase Breakdown
 

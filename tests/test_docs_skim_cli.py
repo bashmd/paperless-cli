@@ -32,6 +32,34 @@ def test_docs_skim_requires_query() -> None:
         runner.invoke(app, ["docs", "skim"], catch_exceptions=False)
 
 
+def test_docs_skim_defaults_to_ripgrep_style_output(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def fake_create_client(options: Any) -> tuple[object, RuntimeContext]:
+        _ = options
+        return object(), RuntimeContext(profile="default", url="https://example", token="token")
+
+    def fake_collect(self: Any, client: Any, search: Any) -> list[FakeDocument]:
+        _ = (self, client, search)
+        return [
+            FakeDocument(
+                id=1,
+                content="alpha invoice beta",
+                created=dt.date(2026, 1, 1),
+            )
+        ]
+
+    monkeypatch.setattr(docs_cli, "create_client", fake_create_client)
+    monkeypatch.setattr(DocumentSearchAdapter, "collect_documents_sync", fake_collect)
+
+    result = runner.invoke(app, ["docs", "skim", "query=invoice", "max_docs=1"])
+    assert result.exit_code == 0
+    lines = [line for line in result.output.splitlines() if line.strip()]
+    assert lines[0].startswith("1:-:")
+    assert "invoice" in lines[0].lower()
+    assert lines[-1].startswith("# summary ")
+
+
 def test_docs_skim_extracts_hits_with_context(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -57,6 +85,7 @@ def test_docs_skim_extracts_hits_with_context(
         [
             "docs",
             "skim",
+            "format=json",
             "query=invoice",
             "context_before=2",
             "context_after=3",
@@ -100,7 +129,7 @@ def test_docs_skim_limits_hits_per_doc_and_applies_ids_filter(
 
     result = runner.invoke(
         app,
-        ["docs", "skim", "query=invoice", "ids=9", "max_hits_per_doc=1"],
+        ["docs", "skim", "format=json", "query=invoice", "ids=9", "max_hits_per_doc=1"],
     )
     assert result.exit_code == 0
     payload = json.loads(result.output)
@@ -128,7 +157,7 @@ def test_docs_skim_supports_from_stdin_ids(
 
     result = runner.invoke(
         app,
-        ["docs", "skim", "query=invoice", "from_stdin=true"],
+        ["docs", "skim", "format=json", "query=invoice", "from_stdin=true"],
         input=(
             '0\n-2\n1\n{"type":"item","id":2}\n'
             '{"type":"item","id":2.2}\n{"type":"item","id":"bad","doc_id":5}\n'
@@ -149,7 +178,7 @@ def test_docs_skim_from_stdin_empty_returns_empty_without_client(
     monkeypatch.setattr(docs_cli, "create_client", fail_create_client)
     result = runner.invoke(
         app,
-        ["docs", "skim", "query=invoice", "from_stdin=true"],
+        ["docs", "skim", "format=json", "query=invoice", "from_stdin=true"],
         input='{"type":"summary","meta":{"next_cursor":null}}\n\n',
     )
     assert result.exit_code == 0
@@ -172,7 +201,7 @@ def test_docs_skim_uses_trimmed_query_for_local_hit_extraction(
     monkeypatch.setattr(docs_cli, "create_client", fake_create_client)
     monkeypatch.setattr(DocumentSearchAdapter, "collect_documents_sync", fake_collect)
 
-    result = runner.invoke(app, ["docs", "skim", "query=  invoice  "])
+    result = runner.invoke(app, ["docs", "skim", "format=json", "query=  invoice  "])
     assert result.exit_code == 0
     payload = json.loads(result.output)
     assert payload["meta"]["query"] == "invoice"
@@ -183,19 +212,19 @@ def test_docs_skim_rejects_selector_conflicts_and_raw_true() -> None:
     with pytest.raises(UsageValidationError):
         runner.invoke(
             app,
-            ["docs", "skim", "query=invoice", "ids=1", "from_stdin=true"],
+            ["docs", "skim", "format=json", "query=invoice", "ids=1", "from_stdin=true"],
             catch_exceptions=False,
         )
     with pytest.raises(UsageValidationError):
         runner.invoke(
             app,
-            ["docs", "skim", "query=invoice", "raw=true"],
+            ["docs", "skim", "format=json", "query=invoice", "raw=true"],
             catch_exceptions=False,
         )
     with pytest.raises(UsageValidationError):
         runner.invoke(
             app,
-            ["docs", "skim", "query=invoice", "from_stdin=true", "cursor=abc"],
+            ["docs", "skim", "format=json", "query=invoice", "from_stdin=true", "cursor=abc"],
             input='{"type":"item","id":1}\n',
             catch_exceptions=False,
         )
@@ -224,21 +253,28 @@ def test_docs_skim_respects_budget_controls(
 
     by_stop = runner.invoke(
         app,
-        ["docs", "skim", "query=invoice", "stop_after_matches=1", "max_hits_per_doc=3"],
+        [
+            "docs",
+            "skim",
+            "format=json",
+            "query=invoice",
+            "stop_after_matches=1",
+            "max_hits_per_doc=3",
+        ],
     )
     assert by_stop.exit_code == 0
     assert len(json.loads(by_stop.output)["data"]["items"]) == 1
 
     by_chars = runner.invoke(
         app,
-        ["docs", "skim", "query=invoice", "max_chars_total=5", "max_hits_per_doc=3"],
+        ["docs", "skim", "format=json", "query=invoice", "max_chars_total=5", "max_hits_per_doc=3"],
     )
     assert by_chars.exit_code == 0
     assert json.loads(by_chars.output)["data"]["items"] == []
 
     by_pages = runner.invoke(
         app,
-        ["docs", "skim", "query=invoice", "max_pages_total=1", "max_hits_per_doc=3"],
+        ["docs", "skim", "format=json", "query=invoice", "max_pages_total=1", "max_hits_per_doc=3"],
     )
     assert by_pages.exit_code == 0
     assert json.loads(by_pages.output)["data"]["items"] == []
@@ -271,7 +307,7 @@ def test_docs_skim_cursor_resume_returns_remaining_items(
 
     first = runner.invoke(
         app,
-        ["docs", "skim", "query=invoice", "max_hits_per_doc=2", "page_size=2"],
+        ["docs", "skim", "format=json", "query=invoice", "max_hits_per_doc=2", "page_size=2"],
     )
     assert first.exit_code == 0
     first_payload = json.loads(first.output)
@@ -284,6 +320,7 @@ def test_docs_skim_cursor_resume_returns_remaining_items(
         [
             "docs",
             "skim",
+            "format=json",
             "query=invoice",
             "max_hits_per_doc=2",
             "page_size=2",
@@ -312,7 +349,7 @@ def test_docs_skim_cursor_mismatch_and_page_conflict_are_rejected(
 
     first = runner.invoke(
         app,
-        ["docs", "skim", "query=invoice", "max_hits_per_doc=2", "page_size=1"],
+        ["docs", "skim", "format=json", "query=invoice", "max_hits_per_doc=2", "page_size=1"],
     )
     cursor = json.loads(first.output)["meta"]["next_cursor"]
     assert isinstance(cursor, str)
@@ -335,7 +372,7 @@ def test_docs_skim_cursor_mismatch_and_page_conflict_are_rejected(
     with pytest.raises(UsageValidationError) as conflict:
         runner.invoke(
             app,
-            ["docs", "skim", "query=invoice", "cursor=abc", "page=2"],
+            ["docs", "skim", "format=json", "query=invoice", "cursor=abc", "page=2"],
             catch_exceptions=False,
         )
     assert conflict.value.payload.code == "CURSOR_WITH_PAGE"
@@ -360,7 +397,7 @@ def test_docs_skim_with_explicit_page_does_not_emit_resumable_cursor(
 
     result = runner.invoke(
         app,
-        ["docs", "skim", "query=invoice", "page=2", "page_size=1"],
+        ["docs", "skim", "format=json", "query=invoice", "page=2", "page_size=1"],
     )
     assert result.exit_code == 0
     payload = json.loads(result.output)
