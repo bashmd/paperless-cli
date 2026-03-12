@@ -65,6 +65,7 @@ Implement `pcli` in phased increments so each phase is shippable and testable, w
 - [x] `OPT-T1` Integrate optional Rust whitespace normalizer with safe Python fallback.
 - [x] `OPT-T2` Re-benchmark and re-profile discovery hot paths after Rust integration.
 - [x] `OPT-T3` Add ripgrep-style (`format=rg`) discovery output and make it default for find/peek/skim.
+- [ ] `OPT-T4` Add per-document size signals (`content_chars`, optional `token_estimate`) to discovery output for ingest routing.
 
 ## 3. Phase Breakdown
 
