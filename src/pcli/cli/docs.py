@@ -33,6 +33,7 @@ from pcli.core.page_spec import normalize_page_selection
 from pcli.core.parsing import parse_tokens
 from pcli.core.retrieval_source import parse_retrieval_source, resolve_source_candidates
 from pcli.core.validation import validate_raw_allowed
+from pcli.core.whitespace import normalize_whitespace as _normalize_whitespace
 from pcli.models.discovery import DEFAULT_DISCOVERY_SORT, canonicalize_document_search
 
 app = typer.Typer(help="Document discovery and management.", add_completion=False)
@@ -176,12 +177,6 @@ _FACET_FIELD_MAP = {
     "correspondent": "correspondent",
     "year": "year",
 }
-
-
-def _normalize_whitespace(value: str) -> str:
-    """Collapse all whitespace runs into single spaces and trim ends."""
-    return " ".join(value.split())
-
 
 def _parse_fields(value: str | None, *, default_fields: list[str]) -> list[str]:
     if value is None:

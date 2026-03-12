@@ -17,6 +17,7 @@ pcli = "pcli.cli.main:main"
 
 [dependency-groups]
 dev = [
+    "maturin>=1.12.6",
     "mypy>=1.11,<2.0",
     "pytest>=8.3,<9.0",
     "ruff>=0.6,<1.0",

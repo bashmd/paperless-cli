@@ -62,6 +62,8 @@ Implement `pcli` in phased increments so each phase is shippable and testable, w
 - [x] `P6-T3` Validate memory behavior in NDJSON streaming workloads.
 - [x] `P6-T4` Produce command cookbook.
 - [x] `P6-T5` Add release checklist and versioning notes.
+- [x] `OPT-T1` Integrate optional Rust whitespace normalizer with safe Python fallback.
+- [x] `OPT-T2` Re-benchmark and re-profile discovery hot paths after Rust integration.
 
 ## 3. Phase Breakdown
 
