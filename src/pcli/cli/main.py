@@ -7,6 +7,8 @@ from typing import Annotated
 import typer
 
 from pcli import __version__
+from pcli.core.errors import PcliError
+from pcli.core.output import render_error, to_json
 
 app = typer.Typer(
     add_completion=False,
@@ -45,4 +47,8 @@ def root(
 
 def main() -> None:
     """Run CLI app."""
-    app()
+    try:
+        app(standalone_mode=False)
+    except PcliError as exc:
+        typer.echo(to_json(render_error(exc.payload)))
+        raise SystemExit(int(exc.exit_code)) from exc

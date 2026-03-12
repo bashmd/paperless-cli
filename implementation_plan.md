@@ -22,13 +22,13 @@ Implement `pcli` in phased increments so each phase is shippable and testable, w
 - [x] `P0-T3` Add CI-quality local checks (`pytest`, lint, type checks).
 - [x] `P0-T4` Add baseline command entrypoint (`pcli --help`).
 - [x] `P0-T5` Lock implicit contract decisions in ADR.
-- [ ] `P1-T1` Build argument normalization layer.
-- [ ] `P1-T2` Implement typed value parser.
-- [ ] `P1-T3` Implement global options handling.
-- [ ] `P1-T4` Implement output adapters.
-- [ ] `P1-T5` Implement error model and exit-code mapper.
-- [ ] `P1-T6` Implement validation framework for command-level constraints.
-- [ ] `P1-T7` Implement query-filter passthrough rules.
+- [x] `P1-T1` Build argument normalization layer.
+- [x] `P1-T2` Implement typed value parser.
+- [x] `P1-T3` Implement global options handling.
+- [x] `P1-T4` Implement output adapters.
+- [x] `P1-T5` Implement error model and exit-code mapper.
+- [x] `P1-T6` Implement validation framework for command-level constraints.
+- [x] `P1-T7` Implement query-filter passthrough rules.
 - [ ] `P2-T1` Implement config and credential stores.
 - [ ] `P2-T2` Enforce secure file permissions (`0600`) for credential file.
 - [ ] `P2-T3` Implement runtime precedence resolver.
