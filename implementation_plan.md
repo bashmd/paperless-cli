@@ -61,7 +61,7 @@ Implement `pcli` in phased increments so each phase is shippable and testable, w
 - [x] `P6-T2` Add performance benchmarks for large-scale workflows.
 - [x] `P6-T3` Validate memory behavior in NDJSON streaming workloads.
 - [x] `P6-T4` Produce command cookbook.
-- [ ] `P6-T5` Add release checklist and versioning notes.
+- [x] `P6-T5` Add release checklist and versioning notes.
 
 ## 3. Phase Breakdown
 
