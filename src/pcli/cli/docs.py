@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import datetime as dt
 import json
 import re
@@ -72,6 +73,15 @@ _DEFAULT_MAX_HITS_PER_DOC = 3
 _FACETS_KNOWN_OPTION_KEYS = _FIND_KNOWN_OPTION_KEYS | {"by", "facet_scope", "top_values"}
 _DEFAULT_FACET_SCOPE = "page"
 _DEFAULT_TOP_VALUES = 20
+_GET_KNOWN_OPTION_KEYS = {
+    "url",
+    "token",
+    "profile",
+    "timeout",
+    "format",
+    "raw",
+    "verbose",
+}
 _FACETS_ALL_MAX_DOCS = 2_147_483_647
 _SUPPORTED_FACET_FIELDS = {"tags", "doc_type", "document_type", "correspondent", "year"}
 _FACET_FIELD_MAP = {
@@ -457,6 +467,53 @@ def _cursor_search_signature(search: Any) -> dict[str, Any]:
     return signature
 
 
+def _normalize_json_value(value: Any) -> Any:
+    if isinstance(value, (dt.date, dt.datetime)):
+        return value.isoformat()
+    if isinstance(value, list):
+        return [_normalize_json_value(item) for item in value]
+    if isinstance(value, dict):
+        return {str(key): _normalize_json_value(item) for key, item in value.items()}
+    return value
+
+
+def _serialize_document(document: Any) -> dict[str, Any]:
+    raw_data = getattr(document, "_data", None)
+    if isinstance(raw_data, dict):
+        return {str(key): _normalize_json_value(item) for key, item in raw_data.items()}
+
+    payload: dict[str, Any] = {}
+    for field_name in (
+        "id",
+        "title",
+        "content",
+        "created",
+        "modified",
+        "added",
+        "tags",
+        "correspondent",
+        "document_type",
+        "storage_path",
+        "archive_serial_number",
+        "original_file_name",
+        "archived_file_name",
+        "page_count",
+        "mime_type",
+    ):
+        payload[field_name] = _normalize_json_value(getattr(document, field_name, None))
+    return payload
+
+
+async def _fetch_document(client: Any, document_id: int) -> Any:
+    if not getattr(client, "is_initialized", False) and hasattr(client, "initialize"):
+        await client.initialize()
+    return await client.documents(document_id)
+
+
+def _fetch_document_sync(client: Any, document_id: int) -> Any:
+    return asyncio.run(_fetch_document(client, document_id))
+
+
 def _parse_by_fields(value: str | None) -> list[str]:
     if value is None:
         raise UsageValidationError(
@@ -560,6 +617,69 @@ def _build_facets(
             for value, count in ranked[:top_values]
         ]
     return facets
+
+
+@app.command(
+    "get",
+    context_settings={"allow_extra_args": True, "ignore_unknown_options": True},
+)
+def docs_get(
+    ctx: typer.Context,
+    document_id: Annotated[
+        int,
+        typer.Argument(help="Document ID."),
+    ],
+    tokens: Annotated[
+        list[str] | None,
+        typer.Argument(help="Global options."),
+    ] = None,
+) -> None:
+    """Fetch one document with default OCR text retrieval."""
+    raw_tokens = [*(tokens or []), *ctx.args]
+    parsed = parse_tokens(
+        raw_tokens,
+        known_option_keys=_GET_KNOWN_OPTION_KEYS,
+        boolean_option_keys={"raw", "verbose"},
+        strict_boolean_values=True,
+    )
+    if parsed.positional or parsed.passthrough_tokens:
+        raise UsageValidationError(
+            "docs get accepts only key=value or --option arguments after <document-id>.",
+            details={"positional": parsed.positional, "tokens": parsed.passthrough_tokens},
+            error_code="UNEXPECTED_ARGS",
+        )
+    if document_id <= 0:
+        raise UsageValidationError(
+            "document-id must be a positive integer.",
+            details={"document_id": document_id},
+            error_code="INVALID_DOCUMENT_ID",
+        )
+
+    global_options = GlobalOptions.from_updates(parsed.updates)
+    validate_raw_allowed(raw=global_options.raw, command_path="docs get")
+    client, runtime_context = create_client(global_options)
+    document = _fetch_document_sync(client, document_id)
+
+    text = getattr(document, "content", None)
+    content_text = text if isinstance(text, str) else ""
+    page_count = getattr(document, "page_count", None)
+
+    emit_success(
+        resource="docs",
+        action="get",
+        data={
+            "document": _serialize_document(document),
+            "text": content_text,
+            "pages": None,
+            "source": "ocr",
+            "truncated": False,
+        },
+        meta={
+            "id": document_id,
+            "page_count": page_count if isinstance(page_count, int) else None,
+            "profile": runtime_context.profile,
+        },
+    )
 
 
 @app.command(

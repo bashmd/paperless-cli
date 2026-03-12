@@ -9,6 +9,7 @@ import typer
 from pcli import __version__
 from pcli.cli.auth import app as auth_app
 from pcli.cli.docs import app as docs_app
+from pcli.cli.docs import docs_get
 from pcli.core.errors import PcliError
 from pcli.core.output import render_error, to_json
 
@@ -20,6 +21,25 @@ app = typer.Typer(
 )
 app.add_typer(auth_app, name="auth")
 app.add_typer(docs_app, name="docs")
+
+
+@app.command(
+    "get",
+    context_settings={"allow_extra_args": True, "ignore_unknown_options": True},
+)
+def get_alias(
+    ctx: typer.Context,
+    document_id: Annotated[
+        int,
+        typer.Argument(help="Document ID."),
+    ],
+    tokens: Annotated[
+        list[str] | None,
+        typer.Argument(help="Options passed to docs get."),
+    ] = None,
+) -> None:
+    """Alias for `pcli docs get`."""
+    docs_get(ctx=ctx, document_id=document_id, tokens=tokens)
 
 
 def _version_callback(value: bool) -> None:
