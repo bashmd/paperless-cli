@@ -26,6 +26,7 @@ class FakeDocument:
     created: dt.date
     tags: list[int] | None = None
     content: str | None = None
+    page_count: int | None = None
 
 
 def test_docs_peek_requires_selector() -> None:
@@ -212,3 +213,85 @@ def test_docs_peek_rejects_mutually_exclusive_selector_and_raw_true() -> None:
             ["docs", "peek", "query=invoice", "raw=true"],
             catch_exceptions=False,
         )
+
+
+def test_docs_peek_respects_budget_controls(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def fake_create_client(options: Any) -> tuple[object, RuntimeContext]:
+        _ = options
+        return object(), RuntimeContext(profile="default", url="https://example", token="token")
+
+    def fake_collect(self: Any, client: Any, search: Any) -> list[FakeDocument]:
+        _ = (self, client, search)
+        return [
+            FakeDocument(
+                id=1,
+                title="Doc 1",
+                created=dt.date(2026, 1, 1),
+                content="abcdefghij",
+                page_count=2,
+            ),
+            FakeDocument(
+                id=2,
+                title="Doc 2",
+                created=dt.date(2026, 1, 2),
+                content="abcdefghij",
+                page_count=1,
+            ),
+        ]
+
+    monkeypatch.setattr(docs_cli, "create_client", fake_create_client)
+    monkeypatch.setattr(DocumentSearchAdapter, "collect_documents_sync", fake_collect)
+
+    by_stop = runner.invoke(
+        app,
+        ["docs", "peek", "query=invoice", "stop_after_matches=1", "fields=id,excerpt"],
+    )
+    assert by_stop.exit_code == 0
+    assert len(json.loads(by_stop.output)["data"]["items"]) == 1
+
+    by_chars = runner.invoke(
+        app,
+        ["docs", "peek", "query=invoice", "max_chars_total=5", "fields=id,excerpt"],
+    )
+    assert by_chars.exit_code == 0
+    assert json.loads(by_chars.output)["data"]["items"] == []
+
+    by_pages = runner.invoke(
+        app,
+        ["docs", "peek", "query=invoice", "max_pages_total=1", "fields=id,excerpt"],
+    )
+    assert by_pages.exit_code == 0
+    assert json.loads(by_pages.output)["data"]["items"] == []
+
+
+def test_docs_peek_alias_precedence_prefers_per_doc_max_chars(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def fake_create_client(options: Any) -> tuple[object, RuntimeContext]:
+        _ = options
+        return object(), RuntimeContext(profile="default", url="https://example", token="token")
+
+    def fake_collect(self: Any, client: Any, search: Any) -> list[FakeDocument]:
+        _ = (self, client, search)
+        return [FakeDocument(id=1, title="Doc", created=dt.date(2026, 1, 1), content="abcdef")]
+
+    monkeypatch.setattr(docs_cli, "create_client", fake_create_client)
+    monkeypatch.setattr(DocumentSearchAdapter, "collect_documents_sync", fake_collect)
+
+    result = runner.invoke(
+        app,
+        [
+            "docs",
+            "peek",
+            "ids=1",
+            "per_doc_max_chars=4",
+            "max_chars=10",
+            "fields=excerpt",
+        ],
+    )
+    assert result.exit_code == 0
+    payload = json.loads(result.output)
+    assert payload["meta"]["per_doc_max_chars"] == 4
+    assert payload["data"]["items"][0]["excerpt"] == "a..."

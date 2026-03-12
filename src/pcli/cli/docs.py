@@ -41,6 +41,12 @@ _FIND_KNOWN_OPTION_KEYS = {
     "format",
     "raw",
     "verbose",
+    "max_pages_total",
+    "max_chars_total",
+    "stop_after_matches",
+    "per_doc_max_chars",
+    "max_chars",
+    "max_hits_per_doc",
 }
 _DEFAULT_FIND_FIELDS = ["id", "title", "created", "score", "snippet"]
 _SNIPPET_MAX_CHARS = 240
@@ -135,6 +141,22 @@ def _parse_non_negative_int(
             error_code=error_code,
         )
     return parsed
+
+
+def _parse_optional_positive_int(
+    *,
+    value: str | None,
+    field_name: str,
+    error_code: str,
+) -> int | None:
+    if value is None:
+        return None
+    return _parse_positive_int(
+        value=value,
+        default=1,
+        field_name=field_name,
+        error_code=error_code,
+    )
 
 
 def _normalize_scalar_output(value: Any) -> Any:
@@ -364,6 +386,23 @@ def _extract_skim_hits(
     return hits
 
 
+def _document_page_cost(document: Any) -> int:
+    page_count = getattr(document, "page_count", None)
+    if isinstance(page_count, int) and page_count > 0:
+        return page_count
+    return 1
+
+
+def _character_cost(value: Any) -> int:
+    if isinstance(value, str):
+        return len(value)
+    if isinstance(value, list):
+        return sum(_character_cost(item) for item in value)
+    if isinstance(value, dict):
+        return sum(_character_cost(item) for item in value.values())
+    return 0
+
+
 def _parse_by_fields(value: str | None) -> list[str]:
     if value is None:
         raise UsageValidationError(
@@ -521,6 +560,21 @@ def docs_find(
         if ids_only
         else _parse_fields(parsed.updates.get("fields"), default_fields=_DEFAULT_FIND_FIELDS)
     )
+    max_pages_total = _parse_optional_positive_int(
+        value=parsed.updates.get("max_pages_total"),
+        field_name="max_pages_total",
+        error_code="INVALID_MAX_PAGES_TOTAL",
+    )
+    max_chars_total = _parse_optional_positive_int(
+        value=parsed.updates.get("max_chars_total"),
+        field_name="max_chars_total",
+        error_code="INVALID_MAX_CHARS_TOTAL",
+    )
+    stop_after_matches = _parse_optional_positive_int(
+        value=parsed.updates.get("stop_after_matches"),
+        field_name="stop_after_matches",
+        error_code="INVALID_STOP_AFTER_MATCHES",
+    )
 
     global_options = GlobalOptions.from_updates(parsed.updates)
     validate_raw_allowed(raw=global_options.raw, command_path="docs find")
@@ -533,11 +587,31 @@ def docs_find(
         if search.sort == DEFAULT_DISCOVERY_SORT
         else documents
     )
-    rows = (
-        [{"id": getattr(doc, "id", None)} for doc in sorted_documents]
-        if ids_only
-        else [_project_find_document(doc, fields) for doc in sorted_documents]
-    )
+
+    rows: list[dict[str, Any]] = []
+    pages_used = 0
+    chars_used = 0
+    matches = 0
+    for document in sorted_documents:
+        page_cost = _document_page_cost(document)
+        if max_pages_total is not None and pages_used + page_cost > max_pages_total:
+            break
+
+        row = (
+            {"id": getattr(document, "id", None)}
+            if ids_only
+            else _project_find_document(document, fields)
+        )
+        row_chars = _character_cost(row)
+        if max_chars_total is not None and chars_used + row_chars > max_chars_total:
+            break
+        if stop_after_matches is not None and matches + 1 > stop_after_matches:
+            break
+
+        rows.append(row)
+        matches += 1
+        pages_used += page_cost
+        chars_used += row_chars
 
     if global_options.format_mode is FormatMode.NDJSON:
         for row in rows:
@@ -557,6 +631,9 @@ def docs_find(
             "query": search.query,
             "sort": search.sort,
             "ids_only": ids_only,
+            "pages_used": pages_used,
+            "chars_used": chars_used,
+            "matches": matches,
             "profile": runtime_context.profile,
         },
     )
@@ -616,6 +693,21 @@ def docs_peek(
         field_name="per_doc_max_chars",
         error_code="INVALID_PER_DOC_MAX_CHARS",
     )
+    max_pages_total = _parse_optional_positive_int(
+        value=parsed.updates.get("max_pages_total"),
+        field_name="max_pages_total",
+        error_code="INVALID_MAX_PAGES_TOTAL",
+    )
+    max_chars_total = _parse_optional_positive_int(
+        value=parsed.updates.get("max_chars_total"),
+        field_name="max_chars_total",
+        error_code="INVALID_MAX_CHARS_TOTAL",
+    )
+    stop_after_matches = _parse_optional_positive_int(
+        value=parsed.updates.get("stop_after_matches"),
+        field_name="stop_after_matches",
+        error_code="INVALID_STOP_AFTER_MATCHES",
+    )
     fields = _parse_fields(parsed.updates.get("fields"), default_fields=_DEFAULT_PEEK_FIELDS)
 
     filters: dict[str, Any] = dict(parsed.passthrough_filters)
@@ -650,6 +742,9 @@ def docs_peek(
                 "count": 0,
                 "max_docs": 0,
                 "per_doc_max_chars": per_doc_max_chars,
+                "pages_used": 0,
+                "chars_used": 0,
+                "matches": 0,
                 "from_stdin": True,
                 "query": search.query,
                 "profile": global_options.profile or "default",
@@ -676,10 +771,27 @@ def docs_peek(
             key=_selector_rank,
         )
 
-    rows = [
-        _project_peek_document(document, fields, max_chars=per_doc_max_chars)
-        for document in documents
-    ]
+    rows: list[dict[str, Any]] = []
+    pages_used = 0
+    chars_used = 0
+    matches = 0
+    for document in documents:
+        page_cost = _document_page_cost(document)
+        if max_pages_total is not None and pages_used + page_cost > max_pages_total:
+            break
+
+        row = _project_peek_document(document, fields, max_chars=per_doc_max_chars)
+        row_chars = int(row.get("chars", 0))
+        if max_chars_total is not None and chars_used + row_chars > max_chars_total:
+            break
+        if stop_after_matches is not None and matches + 1 > stop_after_matches:
+            break
+
+        rows.append(row)
+        pages_used += page_cost
+        chars_used += row_chars
+        matches += 1
+
     emit_success(
         resource="docs",
         action="peek",
@@ -688,6 +800,9 @@ def docs_peek(
             "count": len(rows),
             "max_docs": search.max_docs,
             "per_doc_max_chars": per_doc_max_chars,
+            "pages_used": pages_used,
+            "chars_used": chars_used,
+            "matches": matches,
             "from_stdin": from_stdin,
             "query": search.query,
             "profile": runtime_context.profile,
@@ -759,6 +874,21 @@ def docs_skim(
         field_name="max_hits_per_doc",
         error_code="INVALID_MAX_HITS_PER_DOC",
     )
+    max_pages_total = _parse_optional_positive_int(
+        value=parsed.updates.get("max_pages_total"),
+        field_name="max_pages_total",
+        error_code="INVALID_MAX_PAGES_TOTAL",
+    )
+    max_chars_total = _parse_optional_positive_int(
+        value=parsed.updates.get("max_chars_total"),
+        field_name="max_chars_total",
+        error_code="INVALID_MAX_CHARS_TOTAL",
+    )
+    stop_after_matches = _parse_optional_positive_int(
+        value=parsed.updates.get("stop_after_matches"),
+        field_name="stop_after_matches",
+        error_code="INVALID_STOP_AFTER_MATCHES",
+    )
 
     filters: dict[str, Any] = dict(parsed.passthrough_filters)
     if selected_ids:
@@ -796,6 +926,9 @@ def docs_skim(
                 "max_hits_per_doc": max_hits_per_doc,
                 "context_before": context_before,
                 "context_after": context_after,
+                "pages_used": 0,
+                "chars_used": 0,
+                "matches": 0,
                 "query": search.query,
                 "from_stdin": True,
                 "profile": global_options.profile or "default",
@@ -810,7 +943,17 @@ def docs_skim(
     normalized_query = search.query or ""
     items: list[dict[str, Any]] = []
     docs_with_hits = 0
+    docs_scanned = 0
+    pages_used = 0
+    chars_used = 0
+    stop_scan = False
     for document in documents:
+        page_cost = _document_page_cost(document)
+        if max_pages_total is not None and pages_used + page_cost > max_pages_total:
+            break
+        pages_used += page_cost
+        docs_scanned += 1
+
         doc_hits = _extract_skim_hits(
             document,
             query=normalized_query,
@@ -818,9 +961,22 @@ def docs_skim(
             context_after=context_after,
             max_hits_per_doc=max_hits_per_doc,
         )
-        if doc_hits:
+        emitted_for_doc = 0
+        for hit in doc_hits:
+            hit_chars = len(str(hit.get("text", "")))
+            if max_chars_total is not None and chars_used + hit_chars > max_chars_total:
+                stop_scan = True
+                break
+            if stop_after_matches is not None and len(items) + 1 > stop_after_matches:
+                stop_scan = True
+                break
+            items.append(hit)
+            chars_used += hit_chars
+            emitted_for_doc += 1
+        if emitted_for_doc > 0:
             docs_with_hits += 1
-            items.extend(doc_hits)
+        if stop_scan:
+            break
 
     emit_success(
         resource="docs",
@@ -828,12 +984,15 @@ def docs_skim(
         data={"items": items},
         meta={
             "count": len(items),
-            "docs_scanned": len(documents),
+            "docs_scanned": docs_scanned,
             "docs_with_hits": docs_with_hits,
             "max_docs": search.max_docs,
             "max_hits_per_doc": max_hits_per_doc,
             "context_before": context_before,
             "context_after": context_after,
+            "pages_used": pages_used,
+            "chars_used": chars_used,
+            "matches": len(items),
             "query": search.query,
             "from_stdin": from_stdin,
             "profile": runtime_context.profile,

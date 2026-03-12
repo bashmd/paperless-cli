@@ -33,6 +33,7 @@ class FakeDocument:
     created: dt.date
     content: str | None = None
     search_hit: FakeSearchHit | None = None
+    page_count: int | None = None
 
 
 def test_docs_find_requires_query() -> None:
@@ -267,3 +268,93 @@ def test_docs_find_rejects_unexpected_positional_token() -> None:
             ["docs", "find", "query=invoice", "unexpected"],
             catch_exceptions=False,
         )
+
+
+def test_docs_find_respects_budget_controls(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def fake_create_client(options: Any) -> tuple[object, RuntimeContext]:
+        _ = options
+        return object(), RuntimeContext(profile="default", url="https://example", token="token")
+
+    def fake_collect(self: Any, client: Any, search: Any) -> list[FakeDocument]:
+        _ = (self, client, search)
+        return [
+            FakeDocument(
+                id=1,
+                title="One",
+                created=dt.date(2026, 1, 1),
+                search_hit=FakeSearchHit(score=0.9, highlights="invoice-match"),
+                page_count=2,
+            ),
+            FakeDocument(
+                id=2,
+                title="Two",
+                created=dt.date(2026, 1, 2),
+                search_hit=FakeSearchHit(score=0.8, highlights="invoice-match"),
+                page_count=1,
+            ),
+        ]
+
+    monkeypatch.setattr(docs_cli, "create_client", fake_create_client)
+    monkeypatch.setattr(DocumentSearchAdapter, "collect_documents_sync", fake_collect)
+
+    by_stop = runner.invoke(
+        app,
+        ["docs", "find", "query=invoice", "stop_after_matches=1", "fields=id,snippet"],
+    )
+    assert by_stop.exit_code == 0
+    assert len(json.loads(by_stop.output)["data"]["items"]) == 1
+
+    by_chars = runner.invoke(
+        app,
+        ["docs", "find", "query=invoice", "max_chars_total=5", "fields=id,snippet"],
+    )
+    assert by_chars.exit_code == 0
+    assert json.loads(by_chars.output)["data"]["items"] == []
+
+    by_pages = runner.invoke(
+        app,
+        ["docs", "find", "query=invoice", "max_pages_total=1"],
+    )
+    assert by_pages.exit_code == 0
+    assert json.loads(by_pages.output)["data"]["items"] == []
+
+
+def test_docs_find_alias_precedence_prefers_max_docs_over_top(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    captured: dict[str, Any] = {}
+
+    def fake_create_client(options: Any) -> tuple[object, RuntimeContext]:
+        _ = options
+        return object(), RuntimeContext(profile="default", url="https://example", token="token")
+
+    def fake_collect(self: Any, client: Any, search: Any) -> list[FakeDocument]:
+        _ = (self, client)
+        captured["search"] = search
+        docs = [
+            FakeDocument(id=1, title="One", created=dt.date(2026, 1, 1)),
+            FakeDocument(id=2, title="Two", created=dt.date(2026, 1, 2)),
+        ]
+        return docs[: search.max_docs]
+
+    monkeypatch.setattr(docs_cli, "create_client", fake_create_client)
+    monkeypatch.setattr(DocumentSearchAdapter, "collect_documents_sync", fake_collect)
+    result = runner.invoke(
+        app,
+        [
+            "docs",
+            "find",
+            "query=invoice",
+            "max_docs=1",
+            "top=2",
+            "per_doc_max_chars=99",
+            "max_hits_per_doc=2",
+        ],
+    )
+    assert result.exit_code == 0
+    assert captured["search"].max_docs == 1
+    assert "per_doc_max_chars" not in captured["search"].filters
+    assert "max_hits_per_doc" not in captured["search"].filters
+    assert len(json.loads(result.output)["data"]["items"]) == 1

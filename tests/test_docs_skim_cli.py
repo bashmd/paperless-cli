@@ -24,6 +24,7 @@ class FakeDocument:
     id: int
     content: str
     created: dt.date
+    page_count: int | None = None
 
 
 def test_docs_skim_requires_query() -> None:
@@ -191,3 +192,46 @@ def test_docs_skim_rejects_selector_conflicts_and_raw_true() -> None:
             ["docs", "skim", "query=invoice", "raw=true"],
             catch_exceptions=False,
         )
+
+
+def test_docs_skim_respects_budget_controls(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def fake_create_client(options: Any) -> tuple[object, RuntimeContext]:
+        _ = options
+        return object(), RuntimeContext(profile="default", url="https://example", token="token")
+
+    def fake_collect(self: Any, client: Any, search: Any) -> list[FakeDocument]:
+        _ = (self, client, search)
+        return [
+            FakeDocument(
+                id=1,
+                content="invoice one invoice two",
+                created=dt.date(2026, 1, 1),
+                page_count=2,
+            )
+        ]
+
+    monkeypatch.setattr(docs_cli, "create_client", fake_create_client)
+    monkeypatch.setattr(DocumentSearchAdapter, "collect_documents_sync", fake_collect)
+
+    by_stop = runner.invoke(
+        app,
+        ["docs", "skim", "query=invoice", "stop_after_matches=1", "max_hits_per_doc=3"],
+    )
+    assert by_stop.exit_code == 0
+    assert len(json.loads(by_stop.output)["data"]["items"]) == 1
+
+    by_chars = runner.invoke(
+        app,
+        ["docs", "skim", "query=invoice", "max_chars_total=5", "max_hits_per_doc=3"],
+    )
+    assert by_chars.exit_code == 0
+    assert json.loads(by_chars.output)["data"]["items"] == []
+
+    by_pages = runner.invoke(
+        app,
+        ["docs", "skim", "query=invoice", "max_pages_total=1", "max_hits_per_doc=3"],
+    )
+    assert by_pages.exit_code == 0
+    assert json.loads(by_pages.output)["data"]["items"] == []
