@@ -58,7 +58,7 @@ Implement `pcli` in phased increments so each phase is shippable and testable, w
 - [x] `P5-T5` Implement tasks endpoint.
 - [x] `P5-T6` Implement permissions expansion option.
 - [x] `P6-T1` Expand test coverage for failure modes and boundary conditions.
-- [ ] `P6-T2` Add performance benchmarks for large-scale workflows.
+- [x] `P6-T2` Add performance benchmarks for large-scale workflows.
 - [ ] `P6-T3` Validate memory behavior in NDJSON streaming workloads.
 - [ ] `P6-T4` Produce command cookbook.
 - [ ] `P6-T5` Add release checklist and versioning notes.
