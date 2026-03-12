@@ -6,9 +6,7 @@ from pathlib import Path
 
 import pytest
 from pypaperless import Paperless
-from pypaperless import const as pypaperless_const
 
-import pcli.adapters.client as client_factory
 from pcli.adapters.client import create_client
 from pcli.adapters.storage import (
     ConfigData,
@@ -19,11 +17,6 @@ from pcli.adapters.storage import (
 )
 from pcli.core.errors import AuthFailureError, UsageValidationError
 from pcli.core.options import GlobalOptions
-
-
-@pytest.fixture(autouse=True)
-def _stub_api_version_probe(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr(client_factory, "_resolve_request_api_version", lambda **_: None)
 
 
 def _write_profile_data(
@@ -70,28 +63,6 @@ def test_create_client_uses_timeout_request_arg(tmp_path: Path) -> None:
     options = GlobalOptions(timeout=30)
     client, _ = create_client(options, paths=paths)
     assert client._request_args["timeout"] == 30
-
-
-def test_create_client_applies_json_index_compat(tmp_path: Path) -> None:
-    paths = _write_profile_data(base_dir=tmp_path)
-    original_index = pypaperless_const.API_PATH.get("index")
-    pypaperless_const.API_PATH["index"] = "/api/schema/"
-    try:
-        create_client(GlobalOptions(), paths=paths)
-        assert pypaperless_const.API_PATH["index"] == "/api/"
-    finally:
-        if original_index is not None:
-            pypaperless_const.API_PATH["index"] = original_index
-
-
-def test_create_client_uses_probed_api_version(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    paths = _write_profile_data(base_dir=tmp_path)
-    monkeypatch.setattr(client_factory, "_resolve_request_api_version", lambda **_: 5)
-    client, _ = create_client(GlobalOptions(), paths=paths)
-    assert client._request_api_version == 5
 
 
 def test_create_client_requires_url(tmp_path: Path) -> None:
