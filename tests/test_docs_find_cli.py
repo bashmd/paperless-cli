@@ -180,6 +180,86 @@ def test_docs_find_rejects_raw_true_for_non_binary_command() -> None:
         )
 
 
+def test_docs_find_ids_only_mode_emits_id_rows(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def fake_create_client(options: Any) -> tuple[object, RuntimeContext]:
+        _ = options
+        return object(), RuntimeContext(profile="default", url="https://example", token="token")
+
+    def fake_collect(self: Any, client: Any, search: Any) -> list[FakeDocument]:
+        _ = (self, client, search)
+        return [
+            FakeDocument(
+                id=10,
+                title="Ten",
+                created=dt.date(2026, 1, 10),
+                search_hit=FakeSearchHit(score=0.9, highlights="Ten"),
+                content="",
+            ),
+            FakeDocument(
+                id=11,
+                title="Eleven",
+                created=dt.date(2026, 1, 11),
+                search_hit=FakeSearchHit(score=0.8, highlights="Eleven"),
+                content="",
+            ),
+        ]
+
+    monkeypatch.setattr(docs_cli, "create_client", fake_create_client)
+    monkeypatch.setattr(DocumentSearchAdapter, "collect_documents_sync", fake_collect)
+
+    result = runner.invoke(
+        app,
+        ["docs", "find", "query=invoice", "ids_only=true", "fields=title,created"],
+    )
+    assert result.exit_code == 0
+    payload = json.loads(result.output)
+    assert payload["meta"]["ids_only"] is True
+    assert payload["data"]["items"] == [{"id": 10}, {"id": 11}]
+
+
+def test_docs_find_ids_only_mode_emits_chainable_ndjson(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def fake_create_client(options: Any) -> tuple[object, RuntimeContext]:
+        _ = options
+        return object(), RuntimeContext(profile="default", url="https://example", token="token")
+
+    def fake_collect(self: Any, client: Any, search: Any) -> list[FakeDocument]:
+        _ = (self, client, search)
+        return [
+            FakeDocument(
+                id=22,
+                title="Twenty Two",
+                created=dt.date(2026, 1, 22),
+                search_hit=FakeSearchHit(score=0.9, highlights="Twenty Two"),
+                content="",
+            ),
+            FakeDocument(
+                id=21,
+                title="Twenty One",
+                created=dt.date(2026, 1, 21),
+                search_hit=FakeSearchHit(score=0.8, highlights="Twenty One"),
+                content="",
+            ),
+        ]
+
+    monkeypatch.setattr(docs_cli, "create_client", fake_create_client)
+    monkeypatch.setattr(DocumentSearchAdapter, "collect_documents_sync", fake_collect)
+
+    result = runner.invoke(
+        app,
+        ["docs", "find", "query=invoice", "ids_only=true", "format=ndjson"],
+    )
+    assert result.exit_code == 0
+
+    lines = [json.loads(line) for line in result.output.splitlines() if line.strip()]
+    assert lines[0] == {"type": "item", "id": 22}
+    assert lines[1] == {"type": "item", "id": 21}
+    assert lines[-1] == {"type": "summary", "meta": {"next_cursor": None}}
+
+
 def test_docs_find_rejects_unexpected_positional_token() -> None:
     with pytest.raises(UsageValidationError):
         runner.invoke(

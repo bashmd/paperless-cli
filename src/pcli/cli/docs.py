@@ -16,7 +16,8 @@ from pcli.adapters.client import create_client
 from pcli.adapters.document_search import DocumentSearchAdapter
 from pcli.cli.io import emit_success
 from pcli.core.errors import UsageValidationError
-from pcli.core.options import GlobalOptions, parse_bool, parse_scalar
+from pcli.core.options import FormatMode, GlobalOptions, parse_bool, parse_scalar
+from pcli.core.output import ndjson_item, ndjson_summary
 from pcli.core.parsing import parse_tokens
 from pcli.core.validation import validate_raw_allowed
 from pcli.models.discovery import DEFAULT_DISCOVERY_SORT, canonicalize_document_search
@@ -31,6 +32,7 @@ _FIND_KNOWN_OPTION_KEYS = {
     "max_docs",
     "top",
     "fields",
+    "ids_only",
     "sort",
     "url",
     "token",
@@ -511,7 +513,14 @@ def docs_find(
         sort=parsed.updates.get("sort"),
         filters=parsed.passthrough_filters,
     )
-    fields = _parse_fields(parsed.updates.get("fields"), default_fields=_DEFAULT_FIND_FIELDS)
+    ids_only = False
+    if "ids_only" in parsed.updates:
+        ids_only = parse_bool(parsed.updates["ids_only"])
+    fields = (
+        ["id"]
+        if ids_only
+        else _parse_fields(parsed.updates.get("fields"), default_fields=_DEFAULT_FIND_FIELDS)
+    )
 
     global_options = GlobalOptions.from_updates(parsed.updates)
     validate_raw_allowed(raw=global_options.raw, command_path="docs find")
@@ -524,7 +533,17 @@ def docs_find(
         if search.sort == DEFAULT_DISCOVERY_SORT
         else documents
     )
-    rows = [_project_find_document(doc, fields) for doc in sorted_documents]
+    rows = (
+        [{"id": getattr(doc, "id", None)} for doc in sorted_documents]
+        if ids_only
+        else [_project_find_document(doc, fields) for doc in sorted_documents]
+    )
+
+    if global_options.format_mode is FormatMode.NDJSON:
+        for row in rows:
+            typer.echo(ndjson_item(row))
+        typer.echo(ndjson_summary(next_cursor=None))
+        return
 
     emit_success(
         resource="docs",
@@ -537,6 +556,7 @@ def docs_find(
             "max_docs": search.max_docs,
             "query": search.query,
             "sort": search.sort,
+            "ids_only": ids_only,
             "profile": runtime_context.profile,
         },
     )
