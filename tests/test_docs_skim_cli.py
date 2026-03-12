@@ -192,6 +192,13 @@ def test_docs_skim_rejects_selector_conflicts_and_raw_true() -> None:
             ["docs", "skim", "query=invoice", "raw=true"],
             catch_exceptions=False,
         )
+    with pytest.raises(UsageValidationError):
+        runner.invoke(
+            app,
+            ["docs", "skim", "query=invoice", "from_stdin=true", "cursor=abc"],
+            input='{"type":"item","id":1}\n',
+            catch_exceptions=False,
+        )
 
 
 def test_docs_skim_respects_budget_controls(

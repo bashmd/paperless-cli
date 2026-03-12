@@ -8,13 +8,14 @@ import re
 import sys
 from collections import Counter
 from dataclasses import replace
-from typing import Annotated, Any
+from typing import Annotated, Any, cast
 
 import typer
 
 from pcli.adapters.client import create_client
 from pcli.adapters.document_search import DocumentSearchAdapter
 from pcli.cli.io import emit_success
+from pcli.core.cursor import decode_cursor, encode_cursor
 from pcli.core.errors import UsageValidationError
 from pcli.core.options import FormatMode, GlobalOptions, parse_bool, parse_scalar
 from pcli.core.output import ndjson_item, ndjson_summary
@@ -47,6 +48,7 @@ _FIND_KNOWN_OPTION_KEYS = {
     "per_doc_max_chars",
     "max_chars",
     "max_hits_per_doc",
+    "cursor",
 }
 _DEFAULT_FIND_FIELDS = ["id", "title", "created", "score", "snippet"]
 _SNIPPET_MAX_CHARS = 240
@@ -403,6 +405,58 @@ def _character_cost(value: Any) -> int:
     return 0
 
 
+def _resolve_cursor_offset(
+    updates: dict[str, str],
+    *,
+    command: str,
+    signature: dict[str, Any],
+    from_stdin: bool = False,
+) -> int:
+    token = updates.get("cursor")
+    if token is None:
+        return 0
+    if "page" in updates:
+        raise UsageValidationError(
+            "cursor cannot be combined with explicit page.",
+            error_code="CURSOR_WITH_PAGE",
+        )
+    if from_stdin:
+        raise UsageValidationError(
+            "cursor cannot be combined with from_stdin=true.",
+            error_code="CURSOR_WITH_STDIN",
+        )
+
+    state = decode_cursor(token)
+    if state.command != command or state.signature != signature:
+        raise UsageValidationError(
+            "Cursor does not match current query parameters.",
+            error_code="CURSOR_MISMATCH",
+        )
+    return state.offset
+
+
+def _paginate_with_cursor(
+    items: list[dict[str, Any]],
+    *,
+    offset: int,
+    page_size: int,
+    command: str,
+    signature: dict[str, Any],
+) -> tuple[list[dict[str, Any]], str | None]:
+    paged_items = items[offset : offset + page_size]
+    next_offset = offset + len(paged_items)
+    if next_offset < len(items):
+        return paged_items, encode_cursor(command=command, signature=signature, offset=next_offset)
+    return paged_items, None
+
+
+def _cursor_search_signature(search: Any) -> dict[str, Any]:
+    """Cursor signature payload excluding explicit page binding."""
+    signature = cast(dict[str, Any], search.signature_payload())
+    signature.pop("page", None)
+    return signature
+
+
 def _parse_by_fields(value: str | None) -> list[str]:
     if value is None:
         raise UsageValidationError(
@@ -575,6 +629,20 @@ def docs_find(
         field_name="stop_after_matches",
         error_code="INVALID_STOP_AFTER_MATCHES",
     )
+    explicit_page = "page" in parsed.updates
+    cursor_signature = {
+        "search": _cursor_search_signature(search),
+        "fields": fields,
+        "ids_only": ids_only,
+        "max_pages_total": max_pages_total,
+        "max_chars_total": max_chars_total,
+        "stop_after_matches": stop_after_matches,
+    }
+    cursor_offset = _resolve_cursor_offset(
+        parsed.updates,
+        command="docs.find",
+        signature=cursor_signature,
+    )
 
     global_options = GlobalOptions.from_updates(parsed.updates)
     validate_raw_allowed(raw=global_options.raw, command_path="docs find")
@@ -613,18 +681,29 @@ def docs_find(
         pages_used += page_cost
         chars_used += row_chars
 
+    paged_rows, next_cursor = _paginate_with_cursor(
+        rows,
+        offset=cursor_offset,
+        page_size=search.page_size,
+        command="docs.find",
+        signature=cursor_signature,
+    )
+    if explicit_page:
+        next_cursor = None
+
     if global_options.format_mode is FormatMode.NDJSON:
-        for row in rows:
+        for row in paged_rows:
             typer.echo(ndjson_item(row))
-        typer.echo(ndjson_summary(next_cursor=None))
+        typer.echo(ndjson_summary(next_cursor=next_cursor))
         return
 
     emit_success(
         resource="docs",
         action="find",
-        data={"items": rows},
+        data={"items": paged_rows},
         meta={
-            "count": len(rows),
+            "count": len(paged_rows),
+            "total_matches": len(rows),
             "page": search.page,
             "page_size": search.page_size,
             "max_docs": search.max_docs,
@@ -634,6 +713,7 @@ def docs_find(
             "pages_used": pages_used,
             "chars_used": chars_used,
             "matches": matches,
+            "next_cursor": next_cursor,
             "profile": runtime_context.profile,
         },
     )
@@ -729,6 +809,21 @@ def docs_peek(
         sort=parsed.updates.get("sort"),
         filters=filters,
     )
+    explicit_page = "page" in parsed.updates
+    cursor_signature = {
+        "search": _cursor_search_signature(search),
+        "fields": fields,
+        "per_doc_max_chars": per_doc_max_chars,
+        "max_pages_total": max_pages_total,
+        "max_chars_total": max_chars_total,
+        "stop_after_matches": stop_after_matches,
+    }
+    cursor_offset = _resolve_cursor_offset(
+        parsed.updates,
+        command="docs.peek",
+        signature=cursor_signature,
+        from_stdin=from_stdin,
+    )
 
     global_options = GlobalOptions.from_updates(parsed.updates)
     validate_raw_allowed(raw=global_options.raw, command_path="docs peek")
@@ -747,6 +842,7 @@ def docs_peek(
                 "matches": 0,
                 "from_stdin": True,
                 "query": search.query,
+                "next_cursor": None,
                 "profile": global_options.profile or "default",
             },
         )
@@ -792,12 +888,23 @@ def docs_peek(
         chars_used += row_chars
         matches += 1
 
+    paged_rows, next_cursor = _paginate_with_cursor(
+        rows,
+        offset=cursor_offset,
+        page_size=search.page_size,
+        command="docs.peek",
+        signature=cursor_signature,
+    )
+    if explicit_page:
+        next_cursor = None
+
     emit_success(
         resource="docs",
         action="peek",
-        data={"items": rows},
+        data={"items": paged_rows},
         meta={
-            "count": len(rows),
+            "count": len(paged_rows),
+            "total_matches": len(rows),
             "max_docs": search.max_docs,
             "per_doc_max_chars": per_doc_max_chars,
             "pages_used": pages_used,
@@ -805,6 +912,7 @@ def docs_peek(
             "matches": matches,
             "from_stdin": from_stdin,
             "query": search.query,
+            "next_cursor": next_cursor,
             "profile": runtime_context.profile,
         },
     )
@@ -909,6 +1017,22 @@ def docs_skim(
         sort=parsed.updates.get("sort"),
         filters=filters,
     )
+    explicit_page = "page" in parsed.updates
+    cursor_signature = {
+        "search": _cursor_search_signature(search),
+        "context_before": context_before,
+        "context_after": context_after,
+        "max_hits_per_doc": max_hits_per_doc,
+        "max_pages_total": max_pages_total,
+        "max_chars_total": max_chars_total,
+        "stop_after_matches": stop_after_matches,
+    }
+    cursor_offset = _resolve_cursor_offset(
+        parsed.updates,
+        command="docs.skim",
+        signature=cursor_signature,
+        from_stdin=from_stdin,
+    )
 
     global_options = GlobalOptions.from_updates(parsed.updates)
     validate_raw_allowed(raw=global_options.raw, command_path="docs skim")
@@ -931,6 +1055,7 @@ def docs_skim(
                 "matches": 0,
                 "query": search.query,
                 "from_stdin": True,
+                "next_cursor": None,
                 "profile": global_options.profile or "default",
             },
         )
@@ -978,12 +1103,23 @@ def docs_skim(
         if stop_scan:
             break
 
+    paged_items, next_cursor = _paginate_with_cursor(
+        items,
+        offset=cursor_offset,
+        page_size=search.page_size,
+        command="docs.skim",
+        signature=cursor_signature,
+    )
+    if explicit_page:
+        next_cursor = None
+
     emit_success(
         resource="docs",
         action="skim",
-        data={"items": items},
+        data={"items": paged_items},
         meta={
-            "count": len(items),
+            "count": len(paged_items),
+            "total_matches": len(items),
             "docs_scanned": docs_scanned,
             "docs_with_hits": docs_with_hits,
             "max_docs": search.max_docs,
@@ -995,6 +1131,7 @@ def docs_skim(
             "matches": len(items),
             "query": search.query,
             "from_stdin": from_stdin,
+            "next_cursor": next_cursor,
             "profile": runtime_context.profile,
         },
     )

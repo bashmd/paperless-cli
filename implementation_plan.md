@@ -42,7 +42,7 @@ Implement `pcli` in phased increments so each phase is shippable and testable, w
 - [x] `P3-T6` Implement stdin/selector contract.
 - [x] `P3-T7` Implement `ids_only=true` output mode for `docs find`.
 - [x] `P3-T8` Implement budget controls and alias normalization.
-- [ ] `P3-T9` Implement cursor rules.
+- [x] `P3-T9` Implement cursor rules.
 - [ ] `P4-T1` Implement `pcli get` alias to `docs get`.
 - [ ] `P4-T2` Implement page spec parser.
 - [ ] `P4-T3` Implement source strategy.

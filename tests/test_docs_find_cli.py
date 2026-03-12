@@ -358,3 +358,139 @@ def test_docs_find_alias_precedence_prefers_max_docs_over_top(
     assert "per_doc_max_chars" not in captured["search"].filters
     assert "max_hits_per_doc" not in captured["search"].filters
     assert len(json.loads(result.output)["data"]["items"]) == 1
+
+
+def test_docs_find_cursor_resume_in_ndjson_mode(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def fake_create_client(options: Any) -> tuple[object, RuntimeContext]:
+        _ = options
+        return object(), RuntimeContext(profile="default", url="https://example", token="token")
+
+    def fake_collect(self: Any, client: Any, search: Any) -> list[FakeDocument]:
+        _ = (self, client, search)
+        return [
+            FakeDocument(id=1, title="One", created=dt.date(2026, 1, 1)),
+            FakeDocument(id=2, title="Two", created=dt.date(2026, 1, 2)),
+            FakeDocument(id=3, title="Three", created=dt.date(2026, 1, 3)),
+        ]
+
+    monkeypatch.setattr(docs_cli, "create_client", fake_create_client)
+    monkeypatch.setattr(DocumentSearchAdapter, "collect_documents_sync", fake_collect)
+
+    first = runner.invoke(
+        app,
+        [
+            "docs",
+            "find",
+            "query=invoice",
+            "ids_only=true",
+            "format=ndjson",
+            "page_size=2",
+        ],
+    )
+    assert first.exit_code == 0
+    lines = [json.loads(line) for line in first.output.splitlines() if line.strip()]
+    assert lines[0] == {"type": "item", "id": 1}
+    assert lines[1] == {"type": "item", "id": 2}
+    cursor = lines[-1]["meta"]["next_cursor"]
+    assert isinstance(cursor, str)
+
+    second = runner.invoke(
+        app,
+        [
+            "docs",
+            "find",
+            "query=invoice",
+            "ids_only=true",
+            "format=ndjson",
+            "page_size=2",
+            f"cursor={cursor}",
+        ],
+    )
+    assert second.exit_code == 0
+    lines2 = [json.loads(line) for line in second.output.splitlines() if line.strip()]
+    assert lines2[0] == {"type": "item", "id": 3}
+    assert lines2[-1] == {"type": "summary", "meta": {"next_cursor": None}}
+
+
+def test_docs_find_cursor_mismatch_and_page_conflict_are_rejected(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def fake_create_client(options: Any) -> tuple[object, RuntimeContext]:
+        _ = options
+        return object(), RuntimeContext(profile="default", url="https://example", token="token")
+
+    def fake_collect(self: Any, client: Any, search: Any) -> list[FakeDocument]:
+        _ = (self, client, search)
+        return [
+            FakeDocument(id=1, title="One", created=dt.date(2026, 1, 1)),
+            FakeDocument(id=2, title="Two", created=dt.date(2026, 1, 2)),
+        ]
+
+    monkeypatch.setattr(docs_cli, "create_client", fake_create_client)
+    monkeypatch.setattr(DocumentSearchAdapter, "collect_documents_sync", fake_collect)
+
+    first = runner.invoke(
+        app,
+        ["docs", "find", "query=invoice", "ids_only=true", "format=ndjson", "page_size=1"],
+    )
+    cursor = json.loads(first.output.splitlines()[-1])["meta"]["next_cursor"]
+    assert isinstance(cursor, str)
+
+    with pytest.raises(UsageValidationError) as mismatch:
+        runner.invoke(
+            app,
+            [
+                "docs",
+                "find",
+                "query=contracts",
+                "ids_only=true",
+                "format=ndjson",
+                "page_size=1",
+                f"cursor={cursor}",
+            ],
+            catch_exceptions=False,
+        )
+    assert mismatch.value.payload.code == "CURSOR_MISMATCH"
+
+    with pytest.raises(UsageValidationError) as conflict:
+        runner.invoke(
+            app,
+            ["docs", "find", "query=invoice", "cursor=abc", "page=2"],
+            catch_exceptions=False,
+        )
+    assert conflict.value.payload.code == "CURSOR_WITH_PAGE"
+
+
+def test_docs_find_with_explicit_page_does_not_emit_resumable_cursor(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def fake_create_client(options: Any) -> tuple[object, RuntimeContext]:
+        _ = options
+        return object(), RuntimeContext(profile="default", url="https://example", token="token")
+
+    def fake_collect(self: Any, client: Any, search: Any) -> list[FakeDocument]:
+        _ = (self, client, search)
+        return [
+            FakeDocument(id=10, title="Ten", created=dt.date(2026, 1, 10)),
+            FakeDocument(id=11, title="Eleven", created=dt.date(2026, 1, 11)),
+        ]
+
+    monkeypatch.setattr(docs_cli, "create_client", fake_create_client)
+    monkeypatch.setattr(DocumentSearchAdapter, "collect_documents_sync", fake_collect)
+
+    result = runner.invoke(
+        app,
+        [
+            "docs",
+            "find",
+            "query=invoice",
+            "format=ndjson",
+            "page=2",
+            "page_size=1",
+        ],
+    )
+    assert result.exit_code == 0
+    summary = json.loads(result.output.splitlines()[-1])
+    assert summary == {"type": "summary", "meta": {"next_cursor": None}}

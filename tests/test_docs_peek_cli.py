@@ -213,6 +213,13 @@ def test_docs_peek_rejects_mutually_exclusive_selector_and_raw_true() -> None:
             ["docs", "peek", "query=invoice", "raw=true"],
             catch_exceptions=False,
         )
+    with pytest.raises(UsageValidationError):
+        runner.invoke(
+            app,
+            ["docs", "peek", "from_stdin=true", "cursor=abc"],
+            input='{"type":"item","id":1}\n',
+            catch_exceptions=False,
+        )
 
 
 def test_docs_peek_respects_budget_controls(
