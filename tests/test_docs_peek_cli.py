@@ -302,3 +302,142 @@ def test_docs_peek_alias_precedence_prefers_per_doc_max_chars(
     payload = json.loads(result.output)
     assert payload["meta"]["per_doc_max_chars"] == 4
     assert payload["data"]["items"][0]["excerpt"] == "a..."
+
+
+def test_docs_peek_cursor_resume_returns_remaining_items(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def fake_create_client(options: Any) -> tuple[object, RuntimeContext]:
+        _ = options
+        return object(), RuntimeContext(profile="default", url="https://example", token="token")
+
+    def fake_collect(self: Any, client: Any, search: Any) -> list[FakeDocument]:
+        _ = (self, client, search)
+        return [
+            FakeDocument(
+                id=1,
+                title="Doc 1",
+                created=dt.date(2026, 1, 1),
+                content="preview one",
+            ),
+            FakeDocument(
+                id=2,
+                title="Doc 2",
+                created=dt.date(2026, 1, 2),
+                content="preview two",
+            ),
+            FakeDocument(
+                id=3,
+                title="Doc 3",
+                created=dt.date(2026, 1, 3),
+                content="preview three",
+            ),
+        ]
+
+    monkeypatch.setattr(docs_cli, "create_client", fake_create_client)
+    monkeypatch.setattr(DocumentSearchAdapter, "collect_documents_sync", fake_collect)
+
+    first = runner.invoke(
+        app,
+        ["docs", "peek", "query=invoice", "fields=id,excerpt", "page_size=2"],
+    )
+    assert first.exit_code == 0
+    first_payload = json.loads(first.output)
+    assert [item["id"] for item in first_payload["data"]["items"]] == [1, 2]
+    cursor = first_payload["meta"]["next_cursor"]
+    assert isinstance(cursor, str)
+
+    second = runner.invoke(
+        app,
+        [
+            "docs",
+            "peek",
+            "query=invoice",
+            "fields=id,excerpt",
+            "page_size=2",
+            f"cursor={cursor}",
+        ],
+    )
+    assert second.exit_code == 0
+    second_payload = json.loads(second.output)
+    assert [item["id"] for item in second_payload["data"]["items"]] == [3]
+    assert second_payload["meta"]["next_cursor"] is None
+
+
+def test_docs_peek_cursor_mismatch_and_page_conflict_are_rejected(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def fake_create_client(options: Any) -> tuple[object, RuntimeContext]:
+        _ = options
+        return object(), RuntimeContext(profile="default", url="https://example", token="token")
+
+    def fake_collect(self: Any, client: Any, search: Any) -> list[FakeDocument]:
+        _ = (self, client, search)
+        return [
+            FakeDocument(id=1, title="Doc 1", created=dt.date(2026, 1, 1), content="preview one"),
+            FakeDocument(id=2, title="Doc 2", created=dt.date(2026, 1, 2), content="preview two"),
+        ]
+
+    monkeypatch.setattr(docs_cli, "create_client", fake_create_client)
+    monkeypatch.setattr(DocumentSearchAdapter, "collect_documents_sync", fake_collect)
+
+    first = runner.invoke(
+        app,
+        ["docs", "peek", "query=invoice", "fields=id,excerpt", "page_size=1"],
+    )
+    cursor = json.loads(first.output)["meta"]["next_cursor"]
+    assert isinstance(cursor, str)
+
+    with pytest.raises(UsageValidationError) as mismatch:
+        runner.invoke(
+            app,
+            [
+                "docs",
+                "peek",
+                "query=contracts",
+                "fields=id,excerpt",
+                "page_size=1",
+                f"cursor={cursor}",
+            ],
+            catch_exceptions=False,
+        )
+    assert mismatch.value.payload.code == "CURSOR_MISMATCH"
+
+    with pytest.raises(UsageValidationError) as conflict:
+        runner.invoke(
+            app,
+            ["docs", "peek", "query=invoice", "fields=id,excerpt", "cursor=abc", "page=2"],
+            catch_exceptions=False,
+        )
+    assert conflict.value.payload.code == "CURSOR_WITH_PAGE"
+
+
+def test_docs_peek_with_explicit_page_does_not_emit_resumable_cursor(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def fake_create_client(options: Any) -> tuple[object, RuntimeContext]:
+        _ = options
+        return object(), RuntimeContext(profile="default", url="https://example", token="token")
+
+    def fake_collect(self: Any, client: Any, search: Any) -> list[FakeDocument]:
+        _ = (self, client, search)
+        return [
+            FakeDocument(id=10, title="Ten", created=dt.date(2026, 1, 10), content="preview ten"),
+            FakeDocument(
+                id=11,
+                title="Eleven",
+                created=dt.date(2026, 1, 11),
+                content="preview eleven",
+            ),
+        ]
+
+    monkeypatch.setattr(docs_cli, "create_client", fake_create_client)
+    monkeypatch.setattr(DocumentSearchAdapter, "collect_documents_sync", fake_collect)
+
+    result = runner.invoke(
+        app,
+        ["docs", "peek", "query=invoice", "fields=id,excerpt", "page=2", "page_size=1"],
+    )
+    assert result.exit_code == 0
+    payload = json.loads(result.output)
+    assert payload["meta"]["next_cursor"] is None
