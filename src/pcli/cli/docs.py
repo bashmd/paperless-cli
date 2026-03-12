@@ -29,6 +29,8 @@ from pcli.core.validation import validate_raw_allowed
 from pcli.models.discovery import DEFAULT_DISCOVERY_SORT, canonicalize_document_search
 
 app = typer.Typer(help="Document discovery and management.", add_completion=False)
+notes_app = typer.Typer(help="Document note operations.", add_completion=False)
+app.add_typer(notes_app, name="notes")
 
 _FIND_KNOWN_OPTION_KEYS = {
     "query",
@@ -140,6 +142,9 @@ _EMAIL_KNOWN_OPTION_KEYS = {
     "raw",
     "verbose",
 }
+_NOTES_LIST_KNOWN_OPTION_KEYS = _METADATA_KNOWN_OPTION_KEYS
+_NOTES_ADD_KNOWN_OPTION_KEYS = _METADATA_KNOWN_OPTION_KEYS | {"note"}
+_NOTES_DELETE_KNOWN_OPTION_KEYS = _METADATA_KNOWN_OPTION_KEYS | {"yes"}
 _GET_KNOWN_OPTION_KEYS = {
     "pages",
     "max_pages",
@@ -654,6 +659,52 @@ def _send_document_email_sync(
             use_archive_version=use_archive_version,
         )
     )
+
+
+async def _fetch_document_notes(client: Any, document_id: int) -> list[Any]:
+    if not getattr(client, "is_initialized", False) and hasattr(client, "initialize"):
+        await client.initialize()
+    notes = await client.documents.notes(document_id)
+    if not isinstance(notes, list):
+        return []
+    return notes
+
+
+def _fetch_document_notes_sync(client: Any, document_id: int) -> list[Any]:
+    return asyncio.run(_fetch_document_notes(client, document_id))
+
+
+async def _add_document_note(client: Any, document_id: int, note: str) -> tuple[int, int]:
+    if not getattr(client, "is_initialized", False) and hasattr(client, "initialize"):
+        await client.initialize()
+    draft = client.documents.notes.draft(document_id, note=note)
+    result = await draft.save()
+    if isinstance(result, tuple) and len(result) == 2:
+        return int(result[0]), int(result[1])
+    raise UsageValidationError(
+        "Unexpected response while creating note.",
+        details={"result": result},
+        error_code="INVALID_NOTE_RESPONSE",
+    )
+
+
+def _add_document_note_sync(client: Any, document_id: int, note: str) -> tuple[int, int]:
+    return asyncio.run(_add_document_note(client, document_id, note))
+
+
+async def _delete_document_note(client: Any, document_id: int, note_id: int) -> bool:
+    if not getattr(client, "is_initialized", False) and hasattr(client, "initialize"):
+        await client.initialize()
+    notes = await client.documents.notes(document_id)
+    for note in notes:
+        if getattr(note, "id", None) == note_id:
+            deleted = await note.delete()
+            return bool(deleted)
+    return False
+
+
+def _delete_document_note_sync(client: Any, document_id: int, note_id: int) -> bool:
+    return asyncio.run(_delete_document_note(client, document_id, note_id))
 
 
 async def _fetch_binary_document(
@@ -1183,6 +1234,159 @@ def docs_email(
             "to": addresses,
             "use_archive_version": use_archive_version,
         },
+        meta={"profile": runtime_context.profile},
+    )
+
+
+@notes_app.command(
+    "list",
+    context_settings={"allow_extra_args": True, "ignore_unknown_options": True},
+)
+def docs_notes_list(
+    ctx: typer.Context,
+    document_id: Annotated[
+        int,
+        typer.Argument(help="Document ID."),
+    ],
+    tokens: Annotated[
+        list[str] | None,
+        typer.Argument(help="Global options."),
+    ] = None,
+) -> None:
+    """List notes for a document."""
+    updates, _ = _parse_command_tokens(
+        raw_tokens=[*(tokens or []), *ctx.args],
+        known_option_keys=_NOTES_LIST_KNOWN_OPTION_KEYS,
+        command_label="notes list",
+    )
+    if document_id <= 0:
+        raise UsageValidationError(
+            "document-id must be a positive integer.",
+            details={"document_id": document_id},
+            error_code="INVALID_DOCUMENT_ID",
+        )
+
+    global_options = GlobalOptions.from_updates(updates)
+    validate_raw_allowed(raw=global_options.raw, command_path="docs notes list")
+    client, runtime_context = create_client(global_options)
+    notes = _fetch_document_notes_sync(client, document_id)
+    rows = _serialize_document_list(notes)
+
+    emit_success(
+        resource="docs",
+        action="notes-list",
+        data={"items": rows},
+        meta={"document_id": document_id, "count": len(rows), "profile": runtime_context.profile},
+    )
+
+
+@notes_app.command(
+    "add",
+    context_settings={"allow_extra_args": True, "ignore_unknown_options": True},
+)
+def docs_notes_add(
+    ctx: typer.Context,
+    document_id: Annotated[
+        int,
+        typer.Argument(help="Document ID."),
+    ],
+    tokens: Annotated[
+        list[str] | None,
+        typer.Argument(help="Options including note=<text>."),
+    ] = None,
+) -> None:
+    """Add a note to a document."""
+    updates, _ = _parse_command_tokens(
+        raw_tokens=[*(tokens or []), *ctx.args],
+        known_option_keys=_NOTES_ADD_KNOWN_OPTION_KEYS,
+        command_label="notes add",
+    )
+    if document_id <= 0:
+        raise UsageValidationError(
+            "document-id must be a positive integer.",
+            details={"document_id": document_id},
+            error_code="INVALID_DOCUMENT_ID",
+        )
+    note_text = updates.get("note")
+    if note_text is None or not note_text.strip():
+        raise UsageValidationError(
+            "docs notes add requires note=<text>.",
+            error_code="MISSING_NOTE_TEXT",
+        )
+
+    global_options = GlobalOptions.from_updates(updates)
+    validate_raw_allowed(raw=global_options.raw, command_path="docs notes add")
+    client, runtime_context = create_client(global_options)
+    note_id, linked_document_id = _add_document_note_sync(client, document_id, note_text)
+
+    emit_success(
+        resource="docs",
+        action="notes-add",
+        data={"note_id": note_id, "document_id": linked_document_id},
+        meta={"profile": runtime_context.profile},
+    )
+
+
+@notes_app.command(
+    "delete",
+    context_settings={"allow_extra_args": True, "ignore_unknown_options": True},
+)
+def docs_notes_delete(
+    ctx: typer.Context,
+    document_id: Annotated[
+        int,
+        typer.Argument(help="Document ID."),
+    ],
+    note_id: Annotated[
+        int,
+        typer.Argument(help="Note ID."),
+    ],
+    tokens: Annotated[
+        list[str] | None,
+        typer.Argument(help="Options including yes=true."),
+    ] = None,
+) -> None:
+    """Delete a note from a document."""
+    updates, _ = _parse_command_tokens(
+        raw_tokens=[*(tokens or []), *ctx.args],
+        known_option_keys=_NOTES_DELETE_KNOWN_OPTION_KEYS,
+        command_label="notes delete",
+        boolean_keys={"raw", "verbose", "yes"},
+    )
+    if document_id <= 0:
+        raise UsageValidationError(
+            "document-id must be a positive integer.",
+            details={"document_id": document_id},
+            error_code="INVALID_DOCUMENT_ID",
+        )
+    if note_id <= 0:
+        raise UsageValidationError(
+            "note-id must be a positive integer.",
+            details={"note_id": note_id},
+            error_code="INVALID_NOTE_ID",
+        )
+    if not parse_bool(updates.get("yes", "false")):
+        raise UsageValidationError(
+            "docs notes delete requires yes=true.",
+            details={"yes": updates.get("yes")},
+            error_code="CONFIRMATION_REQUIRED",
+        )
+
+    global_options = GlobalOptions.from_updates(updates)
+    validate_raw_allowed(raw=global_options.raw, command_path="docs notes delete")
+    client, runtime_context = create_client(global_options)
+    deleted = _delete_document_note_sync(client, document_id, note_id)
+    if not deleted:
+        raise UsageValidationError(
+            "Note not found for document.",
+            details={"document_id": document_id, "note_id": note_id},
+            error_code="NOTE_NOT_FOUND",
+        )
+
+    emit_success(
+        resource="docs",
+        action="notes-delete",
+        data={"deleted": True, "document_id": document_id, "note_id": note_id},
         meta={"profile": runtime_context.profile},
     )
 
