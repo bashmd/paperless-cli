@@ -51,6 +51,14 @@ _PEEK_KNOWN_OPTION_KEYS = _FIND_KNOWN_OPTION_KEYS | {
 _DEFAULT_PEEK_FIELDS = ["id", "title", "created", "tags", "excerpt"]
 _DEFAULT_PEEK_MAX_DOCS = 20
 _DEFAULT_PEEK_MAX_CHARS = 1200
+_SKIM_KNOWN_OPTION_KEYS = _PEEK_KNOWN_OPTION_KEYS | {
+    "context_before",
+    "context_after",
+    "max_hits_per_doc",
+}
+_DEFAULT_CONTEXT_BEFORE = 200
+_DEFAULT_CONTEXT_AFTER = 300
+_DEFAULT_MAX_HITS_PER_DOC = 3
 _FACETS_KNOWN_OPTION_KEYS = _FIND_KNOWN_OPTION_KEYS | {"by", "facet_scope", "top_values"}
 _DEFAULT_FACET_SCOPE = "page"
 _DEFAULT_TOP_VALUES = 20
@@ -102,6 +110,25 @@ def _parse_positive_int(
     if not isinstance(parsed, int) or isinstance(parsed, bool) or parsed <= 0:
         raise UsageValidationError(
             f"{field_name} must be a positive integer.",
+            details={"value": value},
+            error_code=error_code,
+        )
+    return parsed
+
+
+def _parse_non_negative_int(
+    *,
+    value: str | None,
+    default: int,
+    field_name: str,
+    error_code: str,
+) -> int:
+    if value is None:
+        return default
+    parsed = parse_scalar(value)
+    if not isinstance(parsed, int) or isinstance(parsed, bool) or parsed < 0:
+        raise UsageValidationError(
+            f"{field_name} must be a non-negative integer.",
             details={"value": value},
             error_code=error_code,
         )
@@ -290,6 +317,40 @@ def _project_peek_document(
     projected["chars"] = char_count
     projected["truncated"] = truncated
     return projected
+
+
+def _extract_skim_hits(
+    document: Any,
+    *,
+    query: str,
+    context_before: int,
+    context_after: int,
+    max_hits_per_doc: int,
+) -> list[dict[str, Any]]:
+    source = _peek_source_text(document)
+    if not source:
+        return []
+
+    pattern = re.compile(re.escape(query), re.IGNORECASE)
+    hits: list[dict[str, Any]] = []
+    for match in pattern.finditer(source):
+        start, end = match.span()
+        excerpt_start = max(0, start - context_before)
+        excerpt_end = min(len(source), end + context_after)
+        hits.append(
+            {
+                "doc_id": getattr(document, "id", None),
+                "page": None,
+                "hit": source[start:end],
+                "start": start,
+                "end": end,
+                "text": source[excerpt_start:excerpt_end],
+                "score": 1.0,
+            }
+        )
+        if len(hits) >= max_hits_per_doc:
+            break
+    return hits
 
 
 def _parse_by_fields(value: str | None) -> list[str]:
@@ -600,6 +661,152 @@ def docs_peek(
             "per_doc_max_chars": per_doc_max_chars,
             "from_stdin": from_stdin,
             "query": search.query,
+            "profile": runtime_context.profile,
+        },
+    )
+
+
+@app.command(
+    "skim",
+    context_settings={"allow_extra_args": True, "ignore_unknown_options": True},
+)
+def docs_skim(
+    ctx: typer.Context,
+    tokens: Annotated[
+        list[str] | None,
+        typer.Argument(help="Selector/query/filter options."),
+    ] = None,
+) -> None:
+    """Extract query hits with context windows across many documents."""
+    raw_tokens = [*(tokens or []), *ctx.args]
+    parsed = parse_tokens(
+        raw_tokens,
+        known_option_keys=_SKIM_KNOWN_OPTION_KEYS,
+        passthrough_filter_mode=True,
+        boolean_option_keys={"raw", "verbose", "from_stdin"},
+        strict_boolean_values=True,
+    )
+    if parsed.positional or parsed.passthrough_tokens:
+        raise UsageValidationError(
+            "docs skim accepts only key=value or --option arguments.",
+            details={"positional": parsed.positional, "tokens": parsed.passthrough_tokens},
+            error_code="UNEXPECTED_ARGS",
+        )
+
+    query = parsed.updates.get("query")
+    if query is None or not str(query).strip():
+        raise UsageValidationError(
+            "docs skim requires query=<search terms>.",
+            error_code="MISSING_QUERY",
+        )
+
+    from_stdin = False
+    if "from_stdin" in parsed.updates:
+        from_stdin = parse_bool(parsed.updates["from_stdin"])
+    explicit_ids = _parse_ids(parsed.updates.get("ids"))
+    if from_stdin and explicit_ids:
+        raise UsageValidationError(
+            "from_stdin=true cannot be combined with ids=...",
+            error_code="MUTUALLY_EXCLUSIVE_SELECTORS",
+        )
+    stdin_ids = _read_stdin_ids() if from_stdin else []
+    selected_ids = explicit_ids or stdin_ids
+
+    context_before = _parse_non_negative_int(
+        value=parsed.updates.get("context_before"),
+        default=_DEFAULT_CONTEXT_BEFORE,
+        field_name="context_before",
+        error_code="INVALID_CONTEXT_BEFORE",
+    )
+    context_after = _parse_non_negative_int(
+        value=parsed.updates.get("context_after"),
+        default=_DEFAULT_CONTEXT_AFTER,
+        field_name="context_after",
+        error_code="INVALID_CONTEXT_AFTER",
+    )
+    max_hits_per_doc = _parse_positive_int(
+        value=parsed.updates.get("max_hits_per_doc"),
+        default=_DEFAULT_MAX_HITS_PER_DOC,
+        field_name="max_hits_per_doc",
+        error_code="INVALID_MAX_HITS_PER_DOC",
+    )
+
+    filters: dict[str, Any] = dict(parsed.passthrough_filters)
+    if selected_ids:
+        filters["id__in"] = selected_ids
+
+    max_docs_value = parsed.updates.get("max_docs")
+    top_value = parsed.updates.get("top")
+    if max_docs_value is None and top_value is None and selected_ids:
+        max_docs_value = str(len(selected_ids))
+
+    search = canonicalize_document_search(
+        query=query,
+        custom_field_query=parsed.updates.get("custom_field_query"),
+        page=parsed.updates.get("page"),
+        page_size=parsed.updates.get("page_size"),
+        max_docs=max_docs_value,
+        top=top_value,
+        sort=parsed.updates.get("sort"),
+        filters=filters,
+    )
+
+    global_options = GlobalOptions.from_updates(parsed.updates)
+    validate_raw_allowed(raw=global_options.raw, command_path="docs skim")
+
+    if from_stdin and not selected_ids:
+        emit_success(
+            resource="docs",
+            action="skim",
+            data={"items": []},
+            meta={
+                "count": 0,
+                "docs_scanned": 0,
+                "docs_with_hits": 0,
+                "max_docs": search.max_docs,
+                "max_hits_per_doc": max_hits_per_doc,
+                "context_before": context_before,
+                "context_after": context_after,
+                "query": search.query,
+                "from_stdin": True,
+                "profile": global_options.profile or "default",
+            },
+        )
+        return
+
+    client, runtime_context = create_client(global_options)
+    adapter = DocumentSearchAdapter()
+    documents = adapter.collect_documents_sync(client, search)
+
+    normalized_query = search.query or ""
+    items: list[dict[str, Any]] = []
+    docs_with_hits = 0
+    for document in documents:
+        doc_hits = _extract_skim_hits(
+            document,
+            query=normalized_query,
+            context_before=context_before,
+            context_after=context_after,
+            max_hits_per_doc=max_hits_per_doc,
+        )
+        if doc_hits:
+            docs_with_hits += 1
+            items.extend(doc_hits)
+
+    emit_success(
+        resource="docs",
+        action="skim",
+        data={"items": items},
+        meta={
+            "count": len(items),
+            "docs_scanned": len(documents),
+            "docs_with_hits": docs_with_hits,
+            "max_docs": search.max_docs,
+            "max_hits_per_doc": max_hits_per_doc,
+            "context_before": context_before,
+            "context_after": context_after,
+            "query": search.query,
+            "from_stdin": from_stdin,
             "profile": runtime_context.profile,
         },
     )
