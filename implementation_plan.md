@@ -47,7 +47,7 @@ Implement `pcli` in phased increments so each phase is shippable and testable, w
 - [x] `P4-T2` Implement page spec parser.
 - [x] `P4-T3` Implement source strategy.
 - [x] `P4-T4` Implement `docs list/search/more-like`.
-- [ ] `P4-T5` Implement binary endpoints.
+- [x] `P4-T5` Implement binary endpoints.
 - [ ] `P4-T6` Implement metadata/suggestions/next-asn/email.
 - [ ] `P4-T7` Implement document notes.
 - [ ] `P4-T8` Implement document mutations.

@@ -3,12 +3,14 @@
 from __future__ import annotations
 
 import asyncio
+import base64
 import datetime as dt
 import json
 import re
 import sys
 from collections import Counter
 from dataclasses import replace
+from pathlib import Path
 from typing import Annotated, Any, cast
 
 import typer
@@ -94,6 +96,17 @@ _MORE_LIKE_KNOWN_OPTION_KEYS = {
     "page",
     "page_size",
     "sort",
+    "url",
+    "token",
+    "profile",
+    "timeout",
+    "format",
+    "raw",
+    "verbose",
+}
+_BINARY_KNOWN_OPTION_KEYS = {
+    "original",
+    "output",
     "url",
     "token",
     "profile",
@@ -546,6 +559,42 @@ def _fetch_document_sync(client: Any, document_id: int) -> Any:
     return asyncio.run(_fetch_document(client, document_id))
 
 
+async def _fetch_binary_document(
+    client: Any,
+    *,
+    action: str,
+    document_id: int,
+    original: bool,
+) -> Any:
+    if not getattr(client, "is_initialized", False) and hasattr(client, "initialize"):
+        await client.initialize()
+    helper = getattr(client.documents, action, None)
+    if helper is None:
+        raise UsageValidationError(
+            f"documents.{action} endpoint is not available.",
+            details={"action": action},
+            error_code="UNSUPPORTED_OPERATION",
+        )
+    return await helper(document_id, original=original)
+
+
+def _fetch_binary_document_sync(
+    client: Any,
+    *,
+    action: str,
+    document_id: int,
+    original: bool,
+) -> Any:
+    return asyncio.run(
+        _fetch_binary_document(
+            client,
+            action=action,
+            document_id=document_id,
+            original=original,
+        )
+    )
+
+
 def _available_retrieval_sources(document: Any) -> set[str]:
     sources: set[str] = {"ocr"}
     archive_name = getattr(document, "archived_file_name", None)
@@ -559,6 +608,102 @@ def _available_retrieval_sources(document: Any) -> set[str]:
 
 def _serialize_document_list(documents: list[Any]) -> list[dict[str, Any]]:
     return [_serialize_document(document) for document in documents]
+
+
+def _extract_binary_payload(downloaded: Any) -> tuple[bytes, str | None, str | None]:
+    content = getattr(downloaded, "content", None)
+    if not isinstance(content, bytes):
+        raise UsageValidationError(
+            "Binary endpoint did not return byte content.",
+            error_code="INVALID_BINARY_RESPONSE",
+        )
+    content_type = getattr(downloaded, "content_type", None)
+    filename = getattr(downloaded, "disposition_filename", None)
+    normalized_type = content_type if isinstance(content_type, str) else None
+    normalized_name = filename if isinstance(filename, str) else None
+    return content, normalized_type, normalized_name
+
+
+def _parse_binary_command_tokens(
+    *,
+    raw_tokens: list[str],
+    command_label: str,
+) -> dict[str, str]:
+    parsed = parse_tokens(
+        raw_tokens,
+        known_option_keys=_BINARY_KNOWN_OPTION_KEYS,
+        boolean_option_keys={"raw", "verbose", "original"},
+        strict_boolean_values=True,
+    )
+    if parsed.positional or parsed.passthrough_tokens:
+        raise UsageValidationError(
+            (
+                f"docs {command_label} accepts only key=value or --option "
+                "arguments after <document-id>."
+            ),
+            details={"positional": parsed.positional, "tokens": parsed.passthrough_tokens},
+            error_code="UNEXPECTED_ARGS",
+        )
+    return parsed.updates
+
+
+def _run_binary_document_command(
+    *,
+    command_name: str,
+    document_id: int,
+    updates: dict[str, str],
+) -> None:
+    if document_id <= 0:
+        raise UsageValidationError(
+            "document-id must be a positive integer.",
+            details={"document_id": document_id},
+            error_code="INVALID_DOCUMENT_ID",
+        )
+    original = parse_bool(updates["original"]) if "original" in updates else False
+    output_value = updates.get("output")
+
+    global_options = GlobalOptions.from_updates(updates)
+    validate_raw_allowed(raw=global_options.raw, command_path=f"docs {command_name}")
+    client, runtime_context = create_client(global_options)
+    downloaded = _fetch_binary_document_sync(
+        client,
+        action=command_name,
+        document_id=document_id,
+        original=original,
+    )
+    content, content_type, disposition_filename = _extract_binary_payload(downloaded)
+
+    output_path: Path | None = None
+    if output_value is not None:
+        output_path = Path(output_value).expanduser()
+        output_path.parent.mkdir(parents=True, exist_ok=True)
+        output_path.write_bytes(content)
+
+    if global_options.raw:
+        if output_path is None:
+            sys.stdout.buffer.write(content)
+        return
+
+    data: dict[str, Any] = {
+        "size_bytes": len(content),
+        "content_type": content_type,
+        "filename": disposition_filename,
+        "original": original,
+    }
+    if output_path is None:
+        data["content_base64"] = base64.b64encode(content).decode("ascii")
+    else:
+        data["output"] = str(output_path)
+
+    emit_success(
+        resource="docs",
+        action=command_name,
+        data=data,
+        meta={
+            "id": document_id,
+            "profile": runtime_context.profile,
+        },
+    )
 
 
 def _parse_by_fields(value: str | None) -> list[str]:
@@ -664,6 +809,69 @@ def _build_facets(
             for value, count in ranked[:top_values]
         ]
     return facets
+
+
+@app.command(
+    "download",
+    context_settings={"allow_extra_args": True, "ignore_unknown_options": True},
+)
+def docs_download(
+    ctx: typer.Context,
+    document_id: Annotated[
+        int,
+        typer.Argument(help="Document ID."),
+    ],
+    tokens: Annotated[
+        list[str] | None,
+        typer.Argument(help="Binary options."),
+    ] = None,
+) -> None:
+    """Download archived/original document bytes."""
+    raw_tokens = [*(tokens or []), *ctx.args]
+    updates = _parse_binary_command_tokens(raw_tokens=raw_tokens, command_label="download")
+    _run_binary_document_command(command_name="download", document_id=document_id, updates=updates)
+
+
+@app.command(
+    "preview",
+    context_settings={"allow_extra_args": True, "ignore_unknown_options": True},
+)
+def docs_preview(
+    ctx: typer.Context,
+    document_id: Annotated[
+        int,
+        typer.Argument(help="Document ID."),
+    ],
+    tokens: Annotated[
+        list[str] | None,
+        typer.Argument(help="Binary options."),
+    ] = None,
+) -> None:
+    """Fetch preview bytes for a document."""
+    raw_tokens = [*(tokens or []), *ctx.args]
+    updates = _parse_binary_command_tokens(raw_tokens=raw_tokens, command_label="preview")
+    _run_binary_document_command(command_name="preview", document_id=document_id, updates=updates)
+
+
+@app.command(
+    "thumbnail",
+    context_settings={"allow_extra_args": True, "ignore_unknown_options": True},
+)
+def docs_thumbnail(
+    ctx: typer.Context,
+    document_id: Annotated[
+        int,
+        typer.Argument(help="Document ID."),
+    ],
+    tokens: Annotated[
+        list[str] | None,
+        typer.Argument(help="Binary options."),
+    ] = None,
+) -> None:
+    """Fetch thumbnail bytes for a document."""
+    raw_tokens = [*(tokens or []), *ctx.args]
+    updates = _parse_binary_command_tokens(raw_tokens=raw_tokens, command_label="thumbnail")
+    _run_binary_document_command(command_name="thumbnail", document_id=document_id, updates=updates)
 
 
 @app.command(
