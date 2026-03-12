@@ -1,32 +1,61 @@
-"""Tests for generic resource handler abstraction."""
+"""Tests for reusable resource handler helpers."""
 
 from __future__ import annotations
 
-from collections.abc import AsyncIterator
-from contextlib import asynccontextmanager
+import datetime as dt
 from dataclasses import dataclass
 from typing import Any
 
 import pytest
 
 from pcli.adapters.resource_handler import (
-    ResourceHandler,
-    coerce_resource_fields,
-    serialize_resource_item,
+    apply_mutation_fields,
+    coerce_mutation_fields,
+    create_resource_sync,
+    delete_resource_sync,
+    fetch_resource_sync,
+    list_resource_sync,
+    mutation_error_details,
+    require_confirmation,
+    resolve_only_changed,
+    serialize_resource,
+    serialize_resource_list,
+    update_resource_sync,
 )
 from pcli.core.errors import UsageValidationError
 
 
-@dataclass
-class FakeItem:
-    id: int
-    title: str = "old"
-    _data: dict[str, Any] | None = None
-    _updated_only_changed: bool | None = None
+@dataclass(slots=True)
+class _FakeField:
+    name: str
 
-    def __post_init__(self) -> None:
-        if self._data is None:
-            self._data = {"id": self.id, "title": self.title}
+
+class _FakeDraft:
+    def __init__(self) -> None:
+        self.name: str | None = None
+        self._saved = False
+
+    def _get_dataclass_fields(self) -> list[_FakeField]:
+        return [_FakeField("name")]
+
+    async def save(self) -> int:
+        self._saved = True
+        return 42
+
+
+class _FakeItem:
+    def __init__(self, item_id: int) -> None:
+        self.id = item_id
+        self.name: str = "old"
+        self._updated_only_changed: bool | None = None
+        self._data = {
+            "id": item_id,
+            "created": dt.date(2026, 1, 1),
+            "updated": dt.datetime(2026, 1, 1, 2, 3, 4),
+        }
+
+    def _get_dataclass_fields(self) -> list[_FakeField]:
+        return [_FakeField("id"), _FakeField("name")]
 
     async def update(self, *, only_changed: bool = True) -> bool:
         self._updated_only_changed = only_changed
@@ -36,100 +65,142 @@ class FakeItem:
         return True
 
 
-@dataclass
-class FakeDraft:
-    payload: dict[str, Any]
+class _ReduceCtx:
+    def __init__(self, helper: _FakeHelper, kwargs: dict[str, Any]) -> None:
+        self._helper = helper
+        self._kwargs = kwargs
 
-    async def save(self) -> int:
-        return 99
+    async def __aenter__(self) -> _FakeHelper:
+        self._helper._last_reduce_kwargs = self._kwargs
+        return self._helper
+
+    async def __aexit__(self, exc_type: Any, exc: Any, tb: Any) -> bool:
+        _ = (exc_type, exc, tb)
+        return False
 
 
-class FakeHelper:
+class _FakePage:
+    def __init__(self, item: _FakeItem, *, page: int, page_size: int) -> None:
+        self.items = [item]
+        self.count = 1
+        self.current_page = page
+        self.page_size = page_size
+        self.next_page = None
+        self.previous_page = page - 1 if page > 1 else None
+
+
+class _FakeHelper:
     def __init__(self) -> None:
-        self.items = [FakeItem(1), FakeItem(2)]
-        self.reduce_calls: list[dict[str, Any]] = []
-        self.draft_payloads: list[dict[str, Any]] = []
-        self.request_permissions_called = False
+        self.request_permissions = False
+        self._last_reduce_kwargs: dict[str, Any] | None = None
+        self._last_requested_id: int | None = None
+        self._item = _FakeItem(7)
 
-    @asynccontextmanager
-    async def reduce(self, **kwargs: Any) -> AsyncIterator[object]:
-        self.reduce_calls.append(kwargs)
-        yield object()
+    async def __call__(self, item_id: int) -> _FakeItem:
+        self._last_requested_id = item_id
+        return _FakeItem(item_id)
 
-    def __aiter__(self) -> AsyncIterator[FakeItem]:
-        async def _iterator() -> AsyncIterator[FakeItem]:
-            for item in self.items:
-                yield item
+    def draft(self) -> _FakeDraft:
+        return _FakeDraft()
+
+    def reduce(self, **kwargs: Any) -> _ReduceCtx:
+        return _ReduceCtx(self, kwargs)
+
+    def pages(self, *, page: int = 1, page_size: int = 150) -> Any:
+        async def _iterator() -> Any:
+            yield _FakePage(self._item, page=page, page_size=page_size)
 
         return _iterator()
 
-    async def __call__(self, resource_id: int | str) -> FakeItem:
-        for item in self.items:
-            if item.id == int(resource_id):
-                return item
-        raise LookupError(resource_id)
 
-    def draft(self, **kwargs: Any) -> FakeDraft:
-        self.draft_payloads.append(kwargs)
-        return FakeDraft(payload=kwargs)
-
-    def request_permissions(self) -> None:
-        self.request_permissions_called = True
-
-
-class FakeClient:
+class _FakeClient:
     def __init__(self) -> None:
         self.is_initialized = False
-        self.initialize_calls = 0
-        self.tags = FakeHelper()
+        self.init_calls = 0
+        self.tags = _FakeHelper()
 
     async def initialize(self) -> None:
+        self.init_calls += 1
         self.is_initialized = True
-        self.initialize_calls += 1
 
 
-def test_coerce_fields_and_serialize_item() -> None:
-    assert coerce_resource_fields({"count": "3", "flag": "true", "ids": "1,2"}) == {
-        "count": 3,
-        "flag": True,
-        "ids": [1, 2],
-    }
-    assert serialize_resource_item(FakeItem(7, title="x")) == {"id": 7, "title": "x"}
+def test_mutation_field_helpers_and_confirmation() -> None:
+    fields = coerce_mutation_fields({"name": "x", "count": "2", "enabled": "true", "tags": "1,2"})
+    assert fields == {"name": "x", "count": 2, "enabled": True, "tags": [1, 2]}
+
+    assert resolve_only_changed({}) is True
+    assert resolve_only_changed({"only_changed": "false"}) is False
+
+    require_confirmation({"yes": "true"}, command_path="docs delete")
+    with pytest.raises(UsageValidationError) as exc:
+        require_confirmation({}, command_path="docs delete")
+    assert exc.value.payload.code == "CONFIRMATION_REQUIRED"
 
 
-def test_list_sync_initializes_and_passes_filters() -> None:
-    client = FakeClient()
-    handler = ResourceHandler(client=client, helper_attr="tags")
-    items = handler.list_items_sync(page=2, page_size=5, filters={"name__icontains": "x"})
+def test_apply_mutation_fields_rejects_unknown_fields() -> None:
+    item = _FakeItem(1)
+    apply_mutation_fields(item, {"name": "new-name"})
+    assert item.name == "new-name"
 
-    assert client.initialize_calls == 1
-    assert len(items) == 2
-    assert client.tags.reduce_calls == [{"page": 2, "page_size": 5, "name__icontains": "x"}]
+    with pytest.raises(UsageValidationError) as exc:
+        apply_mutation_fields(item, {"unknown_field": 1}, error_code="INVALID_UPDATE_FIELDS")
+    assert exc.value.payload.code == "INVALID_UPDATE_FIELDS"
 
 
-def test_get_create_update_delete_sync_flows() -> None:
-    client = FakeClient()
-    handler = ResourceHandler(client=client, helper_attr="tags")
+def test_resource_crud_sync_helpers() -> None:
+    client = _FakeClient()
 
-    item = handler.get_sync(1, full_perms=True)
-    assert item.id == 1
-    assert client.tags.request_permissions_called is True
+    page = list_resource_sync(
+        client,
+        helper_name="tags",
+        page=2,
+        page_size=25,
+        filters={"name__icontains": "inv", "id__in": [1, 2, 3]},
+        full_perms=True,
+    )
+    assert client.init_calls == 1
+    assert len(page.items) == 1
+    assert page.count == 1
+    assert page.page == 2
+    assert page.page_size == 25
+    assert client.tags._last_reduce_kwargs == {"name__icontains": "inv", "id__in": "1,2,3"}
+    assert client.tags.request_permissions is False
 
-    created = handler.create_sync({"name": "urgent"})
-    assert created == 99
-    assert client.tags.draft_payloads == [{"name": "urgent"}]
+    item = fetch_resource_sync(client, helper_name="tags", item_id=11, full_perms=True)
+    assert isinstance(item, _FakeItem)
+    assert item.id == 11
+    assert client.tags.request_permissions is False
 
-    updated = handler.update_sync(1, fields={"title": "new"}, only_changed=False)
+    created = create_resource_sync(client, helper_name="tags", fields={"name": "created"})
+    assert created == 42
+
+    updated = update_resource_sync(item, fields={"name": "updated"}, only_changed=False)
     assert updated is True
-    assert item.title == "new"
+    assert item.name == "updated"
     assert item._updated_only_changed is False
 
-    deleted = handler.delete_sync(1)
+    deleted = delete_resource_sync(item)
     assert deleted is True
 
 
-def test_missing_helper_raises_unsupported_resource() -> None:
-    client = FakeClient()
-    handler = ResourceHandler(client=client, helper_attr="missing")
-    with pytest.raises(UsageValidationError):
-        handler.list_items_sync(page=1, page_size=1)
+def test_create_resource_rejects_unknown_fields() -> None:
+    client = _FakeClient()
+    with pytest.raises(UsageValidationError) as exc:
+        create_resource_sync(client, helper_name="tags", fields={"invalid": "x"})
+    assert exc.value.payload.code == "INVALID_CREATE_FIELDS"
+
+
+def test_serialize_resource_helpers_and_error_detail_extraction() -> None:
+    item = _FakeItem(3)
+    serialized = serialize_resource(item)
+    assert serialized["id"] == 3
+    assert serialized["created"] == "2026-01-01"
+    assert serialized["updated"] == "2026-01-01T02:03:04"
+    assert serialize_resource_list([item])[0]["id"] == 3
+
+    class _WithPayload(Exception):
+        def __init__(self) -> None:
+            super().__init__("boom")
+            self.payload = {"detail": "server rejected"}
+
+    assert mutation_error_details(_WithPayload())["server_payload"] == {"detail": "server rejected"}

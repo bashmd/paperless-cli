@@ -8,6 +8,7 @@ import typer
 
 from pcli import __version__
 from pcli.cli.auth import app as auth_app
+from pcli.cli.crud_resources import CRUD_RESOURCE_SPECS, build_crud_resource_app
 from pcli.cli.docs import app as docs_app
 from pcli.cli.docs import docs_get
 from pcli.core.errors import PcliError
@@ -21,6 +22,8 @@ app = typer.Typer(
 )
 app.add_typer(auth_app, name="auth")
 app.add_typer(docs_app, name="docs")
+for crud_spec in CRUD_RESOURCE_SPECS:
+    app.add_typer(build_crud_resource_app(crud_spec), name=crud_spec.cli_name)
 
 
 @app.command(

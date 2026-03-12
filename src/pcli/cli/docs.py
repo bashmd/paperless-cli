@@ -17,6 +17,13 @@ import typer
 
 from pcli.adapters.client import create_client
 from pcli.adapters.document_search import DocumentSearchAdapter
+from pcli.adapters.resource_handler import (
+    apply_mutation_fields,
+    coerce_mutation_fields,
+    mutation_error_details,
+    require_confirmation,
+    resolve_only_changed,
+)
 from pcli.cli.io import emit_success
 from pcli.core.cursor import decode_cursor, encode_cursor
 from pcli.core.errors import PcliError, UsageValidationError
@@ -711,19 +718,11 @@ def _delete_document_note_sync(client: Any, document_id: int, note_id: int) -> b
 
 
 def _mutation_error_details(exc: Exception) -> dict[str, Any]:
-    payload = getattr(exc, "payload", None)
-    if payload is not None:
-        return {"server_payload": payload, "error": str(exc)}
-    if len(exc.args) > 0:
-        return {"server_payload": exc.args[0], "error": str(exc)}
-    return {"error": str(exc)}
+    return mutation_error_details(exc)
 
 
 def _coerce_mutation_fields(raw_fields: dict[str, str]) -> dict[str, Any]:
-    fields: dict[str, Any] = {}
-    for key, value in raw_fields.items():
-        fields[key] = parse_scalar(value)
-    return fields
+    return coerce_mutation_fields(raw_fields)
 
 
 def _read_document_bytes(path_value: str, filename_override: str | None) -> tuple[bytes, str]:
@@ -747,8 +746,7 @@ async def _create_document(
     if not getattr(client, "is_initialized", False) and hasattr(client, "initialize"):
         await client.initialize()
     draft = client.documents.draft(document=document_bytes, filename=filename)
-    for key, value in fields.items():
-        setattr(draft, key, value)
+    apply_mutation_fields(draft, fields, error_code="INVALID_CREATE_FIELDS")
     result = await draft.save()
     return cast(int | str | tuple[int, int], result)
 
@@ -1444,12 +1442,7 @@ def docs_notes_delete(
             details={"note_id": note_id},
             error_code="INVALID_NOTE_ID",
         )
-    if not parse_bool(updates.get("yes", "false")):
-        raise UsageValidationError(
-            "docs notes delete requires yes=true.",
-            details={"yes": updates.get("yes")},
-            error_code="CONFIRMATION_REQUIRED",
-        )
+    require_confirmation(updates, command_path="docs notes delete")
 
     global_options = GlobalOptions.from_updates(updates)
     validate_raw_allowed(raw=global_options.raw, command_path="docs notes delete")
@@ -1556,15 +1549,14 @@ def docs_update(
             "docs update requires at least one field=value assignment.",
             error_code="MISSING_UPDATE_FIELDS",
         )
-    only_changed = parse_bool(updates["only_changed"]) if "only_changed" in updates else True
+    only_changed = resolve_only_changed(updates)
     fields = _coerce_mutation_fields(passthrough_fields)
 
     global_options = GlobalOptions.from_updates(updates)
     validate_raw_allowed(raw=global_options.raw, command_path="docs update")
     client, runtime_context = create_client(global_options)
     document = _fetch_document_sync(client, document_id)
-    for key, value in fields.items():
-        setattr(document, key, value)
+    apply_mutation_fields(document, fields, error_code="INVALID_UPDATE_FIELDS")
     try:
         updated = _update_document_sync(document, only_changed=only_changed)
     except Exception as exc:  # pragma: no cover - defensive mapping
@@ -1614,12 +1606,7 @@ def docs_delete(
             details={"document_id": document_id},
             error_code="INVALID_DOCUMENT_ID",
         )
-    if not parse_bool(updates.get("yes", "false")):
-        raise UsageValidationError(
-            "docs delete requires yes=true.",
-            details={"yes": updates.get("yes")},
-            error_code="CONFIRMATION_REQUIRED",
-        )
+    require_confirmation(updates, command_path="docs delete")
 
     global_options = GlobalOptions.from_updates(updates)
     validate_raw_allowed(raw=global_options.raw, command_path="docs delete")
