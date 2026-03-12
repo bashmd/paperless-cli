@@ -75,6 +75,33 @@ _DEFAULT_MAX_HITS_PER_DOC = 3
 _FACETS_KNOWN_OPTION_KEYS = _FIND_KNOWN_OPTION_KEYS | {"by", "facet_scope", "top_values"}
 _DEFAULT_FACET_SCOPE = "page"
 _DEFAULT_TOP_VALUES = 20
+_LIST_KNOWN_OPTION_KEYS = {
+    "query",
+    "custom_field_query",
+    "page",
+    "page_size",
+    "sort",
+    "url",
+    "token",
+    "profile",
+    "timeout",
+    "format",
+    "raw",
+    "verbose",
+}
+_SEARCH_KNOWN_OPTION_KEYS = _LIST_KNOWN_OPTION_KEYS - {"query"}
+_MORE_LIKE_KNOWN_OPTION_KEYS = {
+    "page",
+    "page_size",
+    "sort",
+    "url",
+    "token",
+    "profile",
+    "timeout",
+    "format",
+    "raw",
+    "verbose",
+}
 _GET_KNOWN_OPTION_KEYS = {
     "pages",
     "max_pages",
@@ -530,6 +557,10 @@ def _available_retrieval_sources(document: Any) -> set[str]:
     return sources
 
 
+def _serialize_document_list(documents: list[Any]) -> list[dict[str, Any]]:
+    return [_serialize_document(document) for document in documents]
+
+
 def _parse_by_fields(value: str | None) -> list[str]:
     if value is None:
         raise UsageValidationError(
@@ -739,6 +770,207 @@ def docs_get(
         meta={
             "id": document_id,
             "page_count": page_count if isinstance(page_count, int) else None,
+            "profile": runtime_context.profile,
+        },
+    )
+
+
+@app.command(
+    "list",
+    context_settings={"allow_extra_args": True, "ignore_unknown_options": True},
+)
+def docs_list(
+    ctx: typer.Context,
+    tokens: Annotated[
+        list[str] | None,
+        typer.Argument(help="Query/filter options."),
+    ] = None,
+) -> None:
+    """List documents with passthrough query/filter pagination."""
+    raw_tokens = [*(tokens or []), *ctx.args]
+    parsed = parse_tokens(
+        raw_tokens,
+        known_option_keys=_LIST_KNOWN_OPTION_KEYS,
+        passthrough_filter_mode=True,
+        boolean_option_keys={"raw", "verbose"},
+        strict_boolean_values=True,
+    )
+    if parsed.positional or parsed.passthrough_tokens:
+        raise UsageValidationError(
+            "docs list accepts only key=value or --option arguments.",
+            details={"positional": parsed.positional, "tokens": parsed.passthrough_tokens},
+            error_code="UNEXPECTED_ARGS",
+        )
+
+    search = canonicalize_document_search(
+        query=parsed.updates.get("query"),
+        custom_field_query=parsed.updates.get("custom_field_query"),
+        page=parsed.updates.get("page"),
+        page_size=parsed.updates.get("page_size"),
+        max_docs=parsed.updates.get("page_size"),
+        sort=parsed.updates.get("sort"),
+        filters=parsed.passthrough_filters,
+    )
+    search = replace(search, max_docs=search.page_size)
+
+    global_options = GlobalOptions.from_updates(parsed.updates)
+    validate_raw_allowed(raw=global_options.raw, command_path="docs list")
+    client, runtime_context = create_client(global_options)
+    adapter = DocumentSearchAdapter()
+    documents = adapter.collect_documents_sync(client, search)
+    rows = _serialize_document_list(documents)
+
+    emit_success(
+        resource="docs",
+        action="list",
+        data={"items": rows},
+        meta={
+            "count": len(rows),
+            "page": search.page,
+            "page_size": search.page_size,
+            "query": search.query,
+            "custom_field_query": search.custom_field_query,
+            "sort": search.sort,
+            "profile": runtime_context.profile,
+        },
+    )
+
+
+@app.command(
+    "search",
+    context_settings={"allow_extra_args": True, "ignore_unknown_options": True},
+)
+def docs_search(
+    ctx: typer.Context,
+    query: Annotated[
+        str,
+        typer.Argument(help="Search query string."),
+    ],
+    tokens: Annotated[
+        list[str] | None,
+        typer.Argument(help="Query/filter options."),
+    ] = None,
+) -> None:
+    """Search documents by positional query with passthrough filters."""
+    raw_tokens = [*(tokens or []), *ctx.args]
+    parsed = parse_tokens(
+        raw_tokens,
+        known_option_keys=_SEARCH_KNOWN_OPTION_KEYS,
+        passthrough_filter_mode=True,
+        boolean_option_keys={"raw", "verbose"},
+        strict_boolean_values=True,
+    )
+    if parsed.positional or parsed.passthrough_tokens:
+        raise UsageValidationError(
+            "docs search accepts only <query> then key=value or --option arguments.",
+            details={"positional": parsed.positional, "tokens": parsed.passthrough_tokens},
+            error_code="UNEXPECTED_ARGS",
+        )
+    if not query.strip():
+        raise UsageValidationError(
+            "docs search requires a non-empty <query> argument.",
+            error_code="MISSING_QUERY",
+        )
+
+    search = canonicalize_document_search(
+        query=query,
+        custom_field_query=parsed.updates.get("custom_field_query"),
+        page=parsed.updates.get("page"),
+        page_size=parsed.updates.get("page_size"),
+        max_docs=parsed.updates.get("page_size"),
+        sort=parsed.updates.get("sort"),
+        filters=parsed.passthrough_filters,
+    )
+    search = replace(search, max_docs=search.page_size)
+
+    global_options = GlobalOptions.from_updates(parsed.updates)
+    validate_raw_allowed(raw=global_options.raw, command_path="docs search")
+    client, runtime_context = create_client(global_options)
+    adapter = DocumentSearchAdapter()
+    documents = adapter.collect_documents_sync(client, search)
+    rows = _serialize_document_list(documents)
+
+    emit_success(
+        resource="docs",
+        action="search",
+        data={"items": rows},
+        meta={
+            "count": len(rows),
+            "page": search.page,
+            "page_size": search.page_size,
+            "query": search.query,
+            "custom_field_query": search.custom_field_query,
+            "sort": search.sort,
+            "profile": runtime_context.profile,
+        },
+    )
+
+
+@app.command(
+    "more-like",
+    context_settings={"allow_extra_args": True, "ignore_unknown_options": True},
+)
+def docs_more_like(
+    ctx: typer.Context,
+    document_id: Annotated[
+        int,
+        typer.Argument(help="Reference document ID."),
+    ],
+    tokens: Annotated[
+        list[str] | None,
+        typer.Argument(help="Pagination/filter options."),
+    ] = None,
+) -> None:
+    """Find similar documents for a given document ID."""
+    raw_tokens = [*(tokens or []), *ctx.args]
+    parsed = parse_tokens(
+        raw_tokens,
+        known_option_keys=_MORE_LIKE_KNOWN_OPTION_KEYS,
+        passthrough_filter_mode=True,
+        boolean_option_keys={"raw", "verbose"},
+        strict_boolean_values=True,
+    )
+    if parsed.positional or parsed.passthrough_tokens:
+        raise UsageValidationError(
+            "docs more-like accepts only key=value or --option arguments after <document-id>.",
+            details={"positional": parsed.positional, "tokens": parsed.passthrough_tokens},
+            error_code="UNEXPECTED_ARGS",
+        )
+    if document_id <= 0:
+        raise UsageValidationError(
+            "document-id must be a positive integer.",
+            details={"document_id": document_id},
+            error_code="INVALID_DOCUMENT_ID",
+        )
+
+    filters: dict[str, Any] = dict(parsed.passthrough_filters)
+    filters["more_like_id"] = document_id
+    search = canonicalize_document_search(
+        page=parsed.updates.get("page"),
+        page_size=parsed.updates.get("page_size"),
+        max_docs=parsed.updates.get("page_size"),
+        sort=parsed.updates.get("sort"),
+        filters=filters,
+    )
+    search = replace(search, max_docs=search.page_size)
+
+    global_options = GlobalOptions.from_updates(parsed.updates)
+    validate_raw_allowed(raw=global_options.raw, command_path="docs more-like")
+    client, runtime_context = create_client(global_options)
+    adapter = DocumentSearchAdapter()
+    documents = adapter.collect_documents_sync(client, search)
+    rows = _serialize_document_list(documents)
+
+    emit_success(
+        resource="docs",
+        action="more-like",
+        data={"items": rows},
+        meta={
+            "count": len(rows),
+            "document_id": document_id,
+            "page": search.page,
+            "page_size": search.page_size,
+            "sort": search.sort,
             "profile": runtime_context.profile,
         },
     )
