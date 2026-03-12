@@ -16,7 +16,9 @@ class _DocumentsHelperProtocol(Protocol):
 
 
 class _PaperlessDiscoveryClientProtocol(Protocol):
-    is_initialized: bool
+    @property
+    def is_initialized(self) -> bool: ...
+
     documents: _DocumentsHelperProtocol
 
     async def initialize(self) -> None: ...
