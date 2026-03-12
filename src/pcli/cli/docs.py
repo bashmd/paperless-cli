@@ -115,6 +115,31 @@ _BINARY_KNOWN_OPTION_KEYS = {
     "raw",
     "verbose",
 }
+_METADATA_KNOWN_OPTION_KEYS = {
+    "url",
+    "token",
+    "profile",
+    "timeout",
+    "format",
+    "raw",
+    "verbose",
+}
+_SUGGESTIONS_KNOWN_OPTION_KEYS = _METADATA_KNOWN_OPTION_KEYS
+_NEXT_ASN_KNOWN_OPTION_KEYS = _METADATA_KNOWN_OPTION_KEYS
+_EMAIL_KNOWN_OPTION_KEYS = {
+    "docs",
+    "to",
+    "subject",
+    "message",
+    "use_archive_version",
+    "url",
+    "token",
+    "profile",
+    "timeout",
+    "format",
+    "raw",
+    "verbose",
+}
 _GET_KNOWN_OPTION_KEYS = {
     "pages",
     "max_pages",
@@ -559,6 +584,78 @@ def _fetch_document_sync(client: Any, document_id: int) -> Any:
     return asyncio.run(_fetch_document(client, document_id))
 
 
+async def _fetch_document_metadata(client: Any, document_id: int) -> Any:
+    if not getattr(client, "is_initialized", False) and hasattr(client, "initialize"):
+        await client.initialize()
+    return await client.documents.metadata(document_id)
+
+
+def _fetch_document_metadata_sync(client: Any, document_id: int) -> Any:
+    return asyncio.run(_fetch_document_metadata(client, document_id))
+
+
+async def _fetch_document_suggestions(client: Any, document_id: int) -> Any:
+    if not getattr(client, "is_initialized", False) and hasattr(client, "initialize"):
+        await client.initialize()
+    return await client.documents.suggestions(document_id)
+
+
+def _fetch_document_suggestions_sync(client: Any, document_id: int) -> Any:
+    return asyncio.run(_fetch_document_suggestions(client, document_id))
+
+
+async def _fetch_next_asn(client: Any) -> int:
+    if not getattr(client, "is_initialized", False) and hasattr(client, "initialize"):
+        await client.initialize()
+    value = await client.documents.get_next_asn()
+    return int(value)
+
+
+def _fetch_next_asn_sync(client: Any) -> int:
+    return asyncio.run(_fetch_next_asn(client))
+
+
+async def _send_document_email(
+    client: Any,
+    *,
+    docs: int | list[int],
+    addresses: str,
+    subject: str,
+    message: str,
+    use_archive_version: bool,
+) -> None:
+    if not getattr(client, "is_initialized", False) and hasattr(client, "initialize"):
+        await client.initialize()
+    await client.documents.email(
+        documents=docs,
+        addresses=addresses,
+        subject=subject,
+        message=message,
+        use_archive_version=use_archive_version,
+    )
+
+
+def _send_document_email_sync(
+    client: Any,
+    *,
+    docs: int | list[int],
+    addresses: str,
+    subject: str,
+    message: str,
+    use_archive_version: bool,
+) -> None:
+    asyncio.run(
+        _send_document_email(
+            client,
+            docs=docs,
+            addresses=addresses,
+            subject=subject,
+            message=message,
+            use_archive_version=use_archive_version,
+        )
+    )
+
+
 async def _fetch_binary_document(
     client: Any,
     *,
@@ -704,6 +801,30 @@ def _run_binary_document_command(
             "profile": runtime_context.profile,
         },
     )
+
+
+def _parse_command_tokens(
+    *,
+    raw_tokens: list[str],
+    known_option_keys: set[str],
+    command_label: str,
+    boolean_keys: set[str] | None = None,
+    passthrough_filter_mode: bool = False,
+) -> tuple[dict[str, str], dict[str, str]]:
+    parsed = parse_tokens(
+        raw_tokens,
+        known_option_keys=known_option_keys,
+        boolean_option_keys=boolean_keys or {"raw", "verbose"},
+        strict_boolean_values=True,
+        passthrough_filter_mode=passthrough_filter_mode,
+    )
+    if parsed.positional or parsed.passthrough_tokens:
+        raise UsageValidationError(
+            f"docs {command_label} accepts only key=value or --option arguments.",
+            details={"positional": parsed.positional, "tokens": parsed.passthrough_tokens},
+            error_code="UNEXPECTED_ARGS",
+        )
+    return parsed.updates, parsed.passthrough_filters
 
 
 def _parse_by_fields(value: str | None) -> list[str]:
@@ -872,6 +993,198 @@ def docs_thumbnail(
     raw_tokens = [*(tokens or []), *ctx.args]
     updates = _parse_binary_command_tokens(raw_tokens=raw_tokens, command_label="thumbnail")
     _run_binary_document_command(command_name="thumbnail", document_id=document_id, updates=updates)
+
+
+@app.command(
+    "metadata",
+    context_settings={"allow_extra_args": True, "ignore_unknown_options": True},
+)
+def docs_metadata(
+    ctx: typer.Context,
+    document_id: Annotated[
+        int,
+        typer.Argument(help="Document ID."),
+    ],
+    tokens: Annotated[
+        list[str] | None,
+        typer.Argument(help="Global options."),
+    ] = None,
+) -> None:
+    """Fetch metadata for a document."""
+    updates, _ = _parse_command_tokens(
+        raw_tokens=[*(tokens or []), *ctx.args],
+        known_option_keys=_METADATA_KNOWN_OPTION_KEYS,
+        command_label="metadata",
+    )
+    if document_id <= 0:
+        raise UsageValidationError(
+            "document-id must be a positive integer.",
+            details={"document_id": document_id},
+            error_code="INVALID_DOCUMENT_ID",
+        )
+
+    global_options = GlobalOptions.from_updates(updates)
+    validate_raw_allowed(raw=global_options.raw, command_path="docs metadata")
+    client, runtime_context = create_client(global_options)
+    metadata = _fetch_document_metadata_sync(client, document_id)
+
+    emit_success(
+        resource="docs",
+        action="metadata",
+        data={"metadata": _serialize_document(metadata)},
+        meta={"id": document_id, "profile": runtime_context.profile},
+    )
+
+
+@app.command(
+    "suggestions",
+    context_settings={"allow_extra_args": True, "ignore_unknown_options": True},
+)
+def docs_suggestions(
+    ctx: typer.Context,
+    document_id: Annotated[
+        int,
+        typer.Argument(help="Document ID."),
+    ],
+    tokens: Annotated[
+        list[str] | None,
+        typer.Argument(help="Global options."),
+    ] = None,
+) -> None:
+    """Fetch suggestions for a document."""
+    updates, _ = _parse_command_tokens(
+        raw_tokens=[*(tokens or []), *ctx.args],
+        known_option_keys=_SUGGESTIONS_KNOWN_OPTION_KEYS,
+        command_label="suggestions",
+    )
+    if document_id <= 0:
+        raise UsageValidationError(
+            "document-id must be a positive integer.",
+            details={"document_id": document_id},
+            error_code="INVALID_DOCUMENT_ID",
+        )
+
+    global_options = GlobalOptions.from_updates(updates)
+    validate_raw_allowed(raw=global_options.raw, command_path="docs suggestions")
+    client, runtime_context = create_client(global_options)
+    suggestions = _fetch_document_suggestions_sync(client, document_id)
+
+    emit_success(
+        resource="docs",
+        action="suggestions",
+        data={"suggestions": _serialize_document(suggestions)},
+        meta={"id": document_id, "profile": runtime_context.profile},
+    )
+
+
+@app.command(
+    "next-asn",
+    context_settings={"allow_extra_args": True, "ignore_unknown_options": True},
+)
+def docs_next_asn(
+    ctx: typer.Context,
+    tokens: Annotated[
+        list[str] | None,
+        typer.Argument(help="Global options."),
+    ] = None,
+) -> None:
+    """Fetch next archive serial number."""
+    updates, _ = _parse_command_tokens(
+        raw_tokens=[*(tokens or []), *ctx.args],
+        known_option_keys=_NEXT_ASN_KNOWN_OPTION_KEYS,
+        command_label="next-asn",
+    )
+
+    global_options = GlobalOptions.from_updates(updates)
+    validate_raw_allowed(raw=global_options.raw, command_path="docs next-asn")
+    client, runtime_context = create_client(global_options)
+    next_asn = _fetch_next_asn_sync(client)
+
+    emit_success(
+        resource="docs",
+        action="next-asn",
+        data={"next_asn": next_asn},
+        meta={"profile": runtime_context.profile},
+    )
+
+
+@app.command(
+    "email",
+    context_settings={"allow_extra_args": True, "ignore_unknown_options": True},
+)
+def docs_email(
+    ctx: typer.Context,
+    tokens: Annotated[
+        list[str] | None,
+        typer.Argument(help="Email options."),
+    ] = None,
+) -> None:
+    """Send selected documents via email."""
+    updates, _ = _parse_command_tokens(
+        raw_tokens=[*(tokens or []), *ctx.args],
+        known_option_keys=_EMAIL_KNOWN_OPTION_KEYS,
+        command_label="email",
+        boolean_keys={"raw", "verbose", "use_archive_version"},
+    )
+
+    docs_value = updates.get("docs")
+    if docs_value is None:
+        raise UsageValidationError(
+            "docs email requires docs=<id-list>.",
+            error_code="MISSING_EMAIL_DOCS",
+        )
+    doc_ids = _parse_ids(docs_value)
+    if not doc_ids:
+        raise UsageValidationError(
+            "docs email requires at least one document id.",
+            error_code="MISSING_EMAIL_DOCS",
+        )
+
+    addresses = updates.get("to")
+    if addresses is None or not addresses.strip():
+        raise UsageValidationError(
+            "docs email requires to=<address-list>.",
+            error_code="MISSING_EMAIL_TO",
+        )
+    subject = updates.get("subject")
+    if subject is None or not subject.strip():
+        raise UsageValidationError(
+            "docs email requires subject=<text>.",
+            error_code="MISSING_EMAIL_SUBJECT",
+        )
+    message = updates.get("message")
+    if message is None:
+        raise UsageValidationError(
+            "docs email requires message=<text>.",
+            error_code="MISSING_EMAIL_MESSAGE",
+        )
+    use_archive_version = (
+        parse_bool(updates["use_archive_version"]) if "use_archive_version" in updates else True
+    )
+
+    global_options = GlobalOptions.from_updates(updates)
+    validate_raw_allowed(raw=global_options.raw, command_path="docs email")
+    client, runtime_context = create_client(global_options)
+    _send_document_email_sync(
+        client,
+        docs=doc_ids if len(doc_ids) > 1 else doc_ids[0],
+        addresses=addresses,
+        subject=subject,
+        message=message,
+        use_archive_version=use_archive_version,
+    )
+
+    emit_success(
+        resource="docs",
+        action="email",
+        data={
+            "sent": True,
+            "docs": doc_ids,
+            "to": addresses,
+            "use_archive_version": use_archive_version,
+        },
+        meta={"profile": runtime_context.profile},
+    )
 
 
 @app.command(
