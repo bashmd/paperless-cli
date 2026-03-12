@@ -55,7 +55,7 @@ Implement `pcli` in phased increments so each phase is shippable and testable, w
 - [x] `P5-T2` Implement CRUD resources.
 - [x] `P5-T3` Implement read-only resources.
 - [x] `P5-T4` Implement singleton reads.
-- [ ] `P5-T5` Implement tasks endpoint.
+- [x] `P5-T5` Implement tasks endpoint.
 - [ ] `P5-T6` Implement permissions expansion option.
 - [ ] `P6-T1` Expand test coverage for failure modes and boundary conditions.
 - [ ] `P6-T2` Add performance benchmarks for large-scale workflows.

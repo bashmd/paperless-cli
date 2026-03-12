@@ -13,6 +13,7 @@ from pcli.cli.docs import app as docs_app
 from pcli.cli.docs import docs_get
 from pcli.cli.readonly_resources import READ_ONLY_RESOURCE_SPECS, build_readonly_resource_app
 from pcli.cli.singleton_resources import SINGLETON_RESOURCE_SPECS, build_singleton_resource_app
+from pcli.cli.tasks_resource import app as tasks_app
 from pcli.core.errors import PcliError
 from pcli.core.output import render_error, to_json
 
@@ -30,6 +31,7 @@ for readonly_spec in READ_ONLY_RESOURCE_SPECS:
     app.add_typer(build_readonly_resource_app(readonly_spec), name=readonly_spec.cli_name)
 for singleton_spec in SINGLETON_RESOURCE_SPECS:
     app.add_typer(build_singleton_resource_app(singleton_spec), name=singleton_spec.cli_name)
+app.add_typer(tasks_app, name="tasks")
 
 
 @app.command(
