@@ -178,6 +178,11 @@ _FACET_FIELD_MAP = {
 }
 
 
+def _normalize_whitespace(value: str) -> str:
+    """Collapse all whitespace runs into single spaces and trim ends."""
+    return " ".join(value.split())
+
+
 def _parse_fields(value: str | None, *, default_fields: list[str]) -> list[str]:
     if value is None:
         return list(default_fields)
@@ -285,7 +290,7 @@ def _synthesize_snippet(document: Any) -> str | None:
         ]
     for highlight in highlights:
         if isinstance(highlight, str) and highlight.strip():
-            normalized = re.sub(r"\s+", " ", highlight).strip()
+            normalized = _normalize_whitespace(highlight)
             if len(normalized) <= _SNIPPET_MAX_CHARS:
                 return normalized
             return normalized[: _SNIPPET_MAX_CHARS - 3].rstrip() + "..."
@@ -293,7 +298,7 @@ def _synthesize_snippet(document: Any) -> str | None:
     content = getattr(document, "content", None)
     if not isinstance(content, str):
         return None
-    normalized_content = re.sub(r"\s+", " ", content).strip()
+    normalized_content = _normalize_whitespace(content)
     if not normalized_content:
         return None
     if len(normalized_content) <= _SNIPPET_MAX_CHARS:
@@ -401,7 +406,7 @@ def _read_stdin_ids() -> list[int]:
 def _peek_source_text(document: Any) -> str:
     content = getattr(document, "content", None)
     if isinstance(content, str):
-        normalized = re.sub(r"\s+", " ", content).strip()
+        normalized = _normalize_whitespace(content)
         if normalized:
             return normalized
 
@@ -414,7 +419,7 @@ def _peek_source_text(document: Any) -> str:
         ]
     for highlight in highlights:
         if isinstance(highlight, str):
-            normalized = re.sub(r"\s+", " ", highlight).strip()
+            normalized = _normalize_whitespace(highlight)
             if normalized:
                 return normalized
     return ""
@@ -453,6 +458,7 @@ def _extract_skim_hits(
     document: Any,
     *,
     query: str,
+    query_pattern: re.Pattern[str] | None = None,
     context_before: int,
     context_after: int,
     max_hits_per_doc: int,
@@ -461,7 +467,7 @@ def _extract_skim_hits(
     if not source:
         return []
 
-    pattern = re.compile(re.escape(query), re.IGNORECASE)
+    pattern = query_pattern or re.compile(re.escape(query), re.IGNORECASE)
     hits: list[dict[str, Any]] = []
     for match in pattern.finditer(source):
         start, end = match.span()
@@ -2443,6 +2449,7 @@ def docs_skim(
     documents = adapter.collect_documents_sync(client, search)
 
     normalized_query = search.query or ""
+    query_pattern = re.compile(re.escape(normalized_query), re.IGNORECASE)
     items: list[dict[str, Any]] = []
     docs_with_hits = 0
     docs_scanned = 0
@@ -2459,6 +2466,7 @@ def docs_skim(
         doc_hits = _extract_skim_hits(
             document,
             query=normalized_query,
+            query_pattern=query_pattern,
             context_before=context_before,
             context_after=context_after,
             max_hits_per_doc=max_hits_per_doc,
