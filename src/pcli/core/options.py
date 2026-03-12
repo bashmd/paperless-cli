@@ -72,6 +72,7 @@ class GlobalOptions:
     """Global option set for command execution."""
 
     url: str | None = None
+    token: str | None = None
     profile: str | None = None
     format_mode: FormatMode = FormatMode.JSON
     raw: bool = False
@@ -84,6 +85,8 @@ class GlobalOptions:
         options = cls()
         if "url" in updates:
             options.url = updates["url"]
+        if "token" in updates:
+            options.token = updates["token"]
         if "profile" in updates:
             options.profile = updates["profile"]
         if "format" in updates:

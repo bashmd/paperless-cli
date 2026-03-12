@@ -199,6 +199,13 @@ pcli auth switch <profile>
 pcli auth list
 ```
 
+Reserved action-name rule:
+
+1. The shorthand `pcli auth <username> <password>` reserves action keywords:
+   - `login`, `status`, `list`, `switch`, `logout`
+2. If username equals one of those keywords, use explicit login form:
+   - `pcli auth login <username> <password> [url=...] [profile=...]`
+
 ## 7. Document Retrieval Contract (single-document deep retrieval)
 
 ## 7.1 Core command

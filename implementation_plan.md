@@ -29,11 +29,11 @@ Implement `pcli` in phased increments so each phase is shippable and testable, w
 - [x] `P1-T5` Implement error model and exit-code mapper.
 - [x] `P1-T6` Implement validation framework for command-level constraints.
 - [x] `P1-T7` Implement query-filter passthrough rules.
-- [ ] `P2-T1` Implement config and credential stores.
-- [ ] `P2-T2` Enforce secure file permissions (`0600`) for credential file.
-- [ ] `P2-T3` Implement runtime precedence resolver.
-- [ ] `P2-T4` Implement auth commands.
-- [ ] `P2-T5` Build API client factory.
+- [x] `P2-T1` Implement config and credential stores.
+- [x] `P2-T2` Enforce secure file permissions (`0600`) for credential file.
+- [x] `P2-T3` Implement runtime precedence resolver.
+- [x] `P2-T4` Implement auth commands.
+- [x] `P2-T5` Build API client factory.
 - [ ] `P3-T1` Implement document search adapter and canonical query/filter model.
 - [ ] `P3-T2` Implement `docs find`.
 - [ ] `P3-T3` Implement `docs facets`.
@@ -136,6 +136,7 @@ Objective: implement authentication and persistent profile/token handling.
    - CLI args > `PCLI_URL`/`PCLI_TOKEN`/`PCLI_PROFILE` > active profile.
 4. `P2-T4` Implement auth commands:
    - `auth <username> <password>`
+   - `auth login <username> <password>` for reserved action-name usernames
    - `auth status`
    - `auth logout`
    - `auth switch`

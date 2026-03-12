@@ -58,3 +58,10 @@ class AuthFailureError(PcliError):
 
     exit_code = ExitCode.AUTH_FAILURE
     error_code = "AUTH_FAILURE"
+
+
+class NetworkTimeoutError(PcliError):
+    """Network or timeout failure when calling remote API."""
+
+    exit_code = ExitCode.NETWORK_TIMEOUT
+    error_code = "NETWORK_TIMEOUT"

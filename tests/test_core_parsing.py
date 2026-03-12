@@ -113,3 +113,8 @@ def test_missing_option_value_raises_validation_error() -> None:
 def test_invalid_format_raises_validation_error() -> None:
     with pytest.raises(UsageValidationError):
         GlobalOptions.from_updates({"format": "yaml"})
+
+
+def test_global_options_parses_token_value() -> None:
+    options = GlobalOptions.from_updates({"token": "abc123"})
+    assert options.token == "abc123"

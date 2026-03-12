@@ -7,6 +7,7 @@ from typing import Annotated
 import typer
 
 from pcli import __version__
+from pcli.cli.auth import app as auth_app
 from pcli.core.errors import PcliError
 from pcli.core.output import render_error, to_json
 
@@ -16,6 +17,7 @@ app = typer.Typer(
     no_args_is_help=False,
     invoke_without_command=True,
 )
+app.add_typer(auth_app, name="auth")
 
 
 def _version_callback(value: bool) -> None:
