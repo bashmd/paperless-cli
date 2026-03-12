@@ -236,6 +236,19 @@ def _parse_ids(value: str | None) -> list[int]:
 
 
 def _read_stdin_ids() -> list[int]:
+    def _coerce_stdin_id(value: Any) -> int | None:
+        if isinstance(value, bool):
+            return None
+        if isinstance(value, int):
+            return value if value > 0 else None
+        if isinstance(value, str):
+            normalized = value.strip()
+            if not normalized.isdigit():
+                return None
+            parsed = int(normalized)
+            return parsed if parsed > 0 else None
+        return None
+
     payload = sys.stdin.read()
     if not payload.strip():
         return []
@@ -244,27 +257,23 @@ def _read_stdin_ids() -> list[int]:
         token = line.strip()
         if not token:
             continue
-        try:
-            ids.append(int(token))
+        parsed_line_id = _coerce_stdin_id(token)
+        if parsed_line_id is not None:
+            ids.append(parsed_line_id)
             continue
-        except ValueError:
-            pass
         try:
             obj = json.loads(token)
         except json.JSONDecodeError:
             continue
         if not isinstance(obj, dict):
             continue
-        record_type = obj.get("type")
-        if record_type in {"summary", "error"}:
+        if obj.get("type") != "item":
             continue
-        candidate = obj.get("id", obj.get("doc_id"))
+        candidate = _coerce_stdin_id(obj.get("id"))
         if candidate is None:
-            continue
-        try:
-            ids.append(int(candidate))
-        except (TypeError, ValueError):
-            continue
+            candidate = _coerce_stdin_id(obj.get("doc_id"))
+        if candidate is not None:
+            ids.append(candidate)
     return ids
 
 
@@ -612,7 +621,7 @@ def docs_peek(
     global_options = GlobalOptions.from_updates(parsed.updates)
     validate_raw_allowed(raw=global_options.raw, command_path="docs peek")
 
-    if from_stdin and not selected_ids and not has_query:
+    if from_stdin and not selected_ids:
         emit_success(
             resource="docs",
             action="peek",
@@ -622,7 +631,7 @@ def docs_peek(
                 "max_docs": 0,
                 "per_doc_max_chars": per_doc_max_chars,
                 "from_stdin": True,
-                "query": None,
+                "query": search.query,
                 "profile": global_options.profile or "default",
             },
         )

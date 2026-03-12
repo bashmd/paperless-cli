@@ -128,10 +128,14 @@ def test_docs_skim_supports_from_stdin_ids(
     result = runner.invoke(
         app,
         ["docs", "skim", "query=invoice", "from_stdin=true"],
-        input='1\n{"id":2}\n',
+        input=(
+            '0\n-2\n1\n{"type":"item","id":2}\n'
+            '{"type":"item","id":2.2}\n{"type":"item","id":"bad","doc_id":5}\n'
+            '{"id":7}\n{"type":"error","id":99}\n{"type":"summary"}\n'
+        ),
     )
     assert result.exit_code == 0
-    assert captured["search"].filters["id__in"] == "1,2"
+    assert captured["search"].filters["id__in"] == "1,2,5"
 
 
 def test_docs_skim_from_stdin_empty_returns_empty_without_client(

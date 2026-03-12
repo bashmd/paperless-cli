@@ -100,10 +100,18 @@ def test_docs_peek_supports_from_stdin_ids(
 
     stdin_payload = "\n".join(
         [
+            "0",
+            "-1",
             "1",
             '{"type":"item","id":2}',
+            '{"type":"item","id":2.5}',
+            '{"type":"item","id":"003"}',
+            '{"type":"item","id":"bad","doc_id":5}',
+            '{"type":"error","error":{"code":"X"}}',
+            '{"type":"meta","id":42}',
             '{"type":"summary","meta":{"next_cursor":null}}',
-            '{"doc_id":3}',
+            '{"type":"item","doc_id":3}',
+            '{"id":999}',
             "not-json",
         ]
     )
@@ -113,7 +121,7 @@ def test_docs_peek_supports_from_stdin_ids(
         input=stdin_payload,
     )
     assert result.exit_code == 0
-    assert captured["search"].filters["id__in"] == "1,2,3"
+    assert captured["search"].filters["id__in"] == "1,2,3,5,3"
     payload = json.loads(result.output)
     assert payload["meta"]["from_stdin"] is True
 
@@ -135,6 +143,25 @@ def test_docs_peek_from_stdin_empty_source_returns_empty_success(
     payload = json.loads(result.output)
     assert payload["data"]["items"] == []
     assert payload["meta"]["from_stdin"] is True
+
+
+def test_docs_peek_from_stdin_empty_with_query_returns_empty_success(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def fail_create_client(options: Any) -> tuple[object, RuntimeContext]:
+        _ = options
+        pytest.fail("create_client should not be called for empty stdin-only peek")
+
+    monkeypatch.setattr(docs_cli, "create_client", fail_create_client)
+    result = runner.invoke(
+        app,
+        ["docs", "peek", "from_stdin=true", "query=invoice"],
+        input='{"type":"summary","meta":{"next_cursor":null}}\n',
+    )
+    assert result.exit_code == 0
+    payload = json.loads(result.output)
+    assert payload["data"]["items"] == []
+    assert payload["meta"]["query"] == "invoice"
 
 
 @pytest.mark.parametrize("max_chars", [1, 2, 3])

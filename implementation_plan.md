@@ -39,7 +39,7 @@ Implement `pcli` in phased increments so each phase is shippable and testable, w
 - [x] `P3-T3` Implement `docs facets`.
 - [x] `P3-T4` Implement `docs peek`.
 - [x] `P3-T5` Implement `docs skim`.
-- [ ] `P3-T6` Implement stdin/selector contract.
+- [x] `P3-T6` Implement stdin/selector contract.
 - [ ] `P3-T7` Implement `ids_only=true` output mode for `docs find`.
 - [ ] `P3-T8` Implement budget controls and alias normalization.
 - [ ] `P3-T9` Implement cursor rules.
