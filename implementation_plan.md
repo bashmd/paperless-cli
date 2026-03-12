@@ -51,7 +51,7 @@ Implement `pcli` in phased increments so each phase is shippable and testable, w
 - [x] `P4-T6` Implement metadata/suggestions/next-asn/email.
 - [x] `P4-T7` Implement document notes.
 - [x] `P4-T8` Implement document mutations.
-- [ ] `P5-T1` Build reusable resource handler abstraction.
+- [x] `P5-T1` Build reusable resource handler abstraction.
 - [ ] `P5-T2` Implement CRUD resources.
 - [ ] `P5-T3` Implement read-only resources.
 - [ ] `P5-T4` Implement singleton reads.
