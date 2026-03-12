@@ -39,6 +39,7 @@ def test_crud_resource_list_and_get_routes(
     helper_attr: str,
 ) -> None:
     seen_helpers: list[str] = []
+    seen_full_perms: list[bool] = []
 
     def fake_create_client(options: Any) -> tuple[object, RuntimeContext]:
         _ = options
@@ -51,9 +52,11 @@ def test_crud_resource_list_and_get_routes(
         page: int,
         page_size: int,
         filters: dict[str, Any] | None = None,
+        full_perms: bool = False,
     ) -> ListPage:
         _ = client
         seen_helpers.append(helper_name)
+        seen_full_perms.append(full_perms)
         return ListPage(
             items=[FakeItem(_data={"id": 1, "name": "x"})],
             count=1,
@@ -70,8 +73,9 @@ def test_crud_resource_list_and_get_routes(
         item_id: int,
         full_perms: bool = False,
     ) -> FakeItem:
-        _ = (client, item_id, full_perms)
+        _ = (client, item_id)
         seen_helpers.append(helper_name)
+        seen_full_perms.append(full_perms)
         return FakeItem(_data={"id": 7, "name": "y"})
 
     monkeypatch.setattr(crud_cli, "create_client", fake_create_client)
@@ -80,13 +84,14 @@ def test_crud_resource_list_and_get_routes(
 
     list_result = runner.invoke(
         app,
-        [resource, "list", "page=2", "page_size=1", "name__icontains=a"],
+        [resource, "list", "page=2", "page_size=1", "name__icontains=a", "full_perms=true"],
     )
-    get_result = runner.invoke(app, [resource, "get", "7"])
+    get_result = runner.invoke(app, [resource, "get", "7", "full_perms=true"])
 
     assert list_result.exit_code == 0
     assert get_result.exit_code == 0
     assert seen_helpers == [helper_attr, helper_attr]
+    assert seen_full_perms == [True, True]
 
     list_payload = json.loads(list_result.output)
     get_payload = json.loads(get_result.output)
@@ -104,6 +109,7 @@ def test_crud_resource_create_update_delete_routes(
 ) -> None:
     seen_helpers: list[str] = []
     seen_only_changed: list[bool] = []
+    seen_full_perms: list[bool] = []
 
     def fake_create_client(options: Any) -> tuple[object, RuntimeContext]:
         _ = options
@@ -132,8 +138,9 @@ def test_crud_resource_create_update_delete_routes(
         item_id: int,
         full_perms: bool = False,
     ) -> FakeItem:
-        _ = (client, helper_name, item_id, full_perms)
+        _ = (client, helper_name, item_id)
         seen_helpers.append(helper_name)
+        seen_full_perms.append(full_perms)
         return FakeItem(_data={"id": item_id, "name": "x"})
 
     def fake_create_resource(client: Any, *, helper_name: str, fields: dict[str, Any]) -> int:
@@ -151,15 +158,16 @@ def test_crud_resource_create_update_delete_routes(
     create_result = runner.invoke(app, [resource, "create", "name=demo"])
     update_result = runner.invoke(
         app,
-        [resource, "update", "4", "name=changed", "only_changed=false"],
+        [resource, "update", "4", "name=changed", "only_changed=false", "full_perms=true"],
     )
-    delete_result = runner.invoke(app, [resource, "delete", "4", "yes=true"])
+    delete_result = runner.invoke(app, [resource, "delete", "4", "yes=true", "full_perms=true"])
 
     assert create_result.exit_code == 0
     assert update_result.exit_code == 0
     assert delete_result.exit_code == 0
     assert seen_helpers == [helper_attr, "create", helper_attr, "update", helper_attr, "delete"]
     assert seen_only_changed == [False]
+    assert seen_full_perms == [True, True]
 
     create_payload = json.loads(create_result.output)
     update_payload = json.loads(update_result.output)

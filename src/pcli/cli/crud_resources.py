@@ -23,7 +23,7 @@ from pcli.adapters.resource_handler import (
 )
 from pcli.cli.io import emit_success
 from pcli.core.errors import PcliError, UsageValidationError
-from pcli.core.options import GlobalOptions, parse_scalar
+from pcli.core.options import GlobalOptions, parse_bool, parse_scalar
 from pcli.core.parsing import parse_tokens
 from pcli.core.validation import validate_raw_allowed
 
@@ -35,6 +35,7 @@ _GLOBAL_KEYS = {
     "format",
     "raw",
     "verbose",
+    "full_perms",
 }
 _LIST_KEYS = _GLOBAL_KEYS | {"page", "page_size"}
 _UPDATE_KEYS = _GLOBAL_KEYS | {"only_changed"}
@@ -89,7 +90,7 @@ def _parse_tokens_for_resource(
     parsed = parse_tokens(
         raw_tokens,
         known_option_keys=known_keys,
-        boolean_option_keys=boolean_keys or {"raw", "verbose"},
+        boolean_option_keys=boolean_keys or {"raw", "verbose", "full_perms"},
         strict_boolean_values=True,
         passthrough_filter_mode=passthrough_filter_mode,
     )
@@ -143,12 +144,14 @@ def build_crud_resource_app(spec: CrudResourceSpec) -> typer.Typer:
         global_options = GlobalOptions.from_updates(updates)
         validate_raw_allowed(raw=global_options.raw, command_path=f"{spec.cli_name} list")
         client, runtime_context = create_client(global_options)
+        full_perms = parse_bool(updates["full_perms"]) if "full_perms" in updates else False
         page_data = list_resource_sync(
             client,
             helper_name=spec.helper_attr,
             page=page,
             page_size=page_size,
             filters=filters,
+            full_perms=full_perms,
         )
         rows = serialize_resource_list(page_data.items)
 
@@ -196,7 +199,13 @@ def build_crud_resource_app(spec: CrudResourceSpec) -> typer.Typer:
         global_options = GlobalOptions.from_updates(updates)
         validate_raw_allowed(raw=global_options.raw, command_path=f"{spec.cli_name} get")
         client, runtime_context = create_client(global_options)
-        item = fetch_resource_sync(client, helper_name=spec.helper_attr, item_id=resource_id)
+        full_perms = parse_bool(updates["full_perms"]) if "full_perms" in updates else False
+        item = fetch_resource_sync(
+            client,
+            helper_name=spec.helper_attr,
+            item_id=resource_id,
+            full_perms=full_perms,
+        )
 
         emit_success(
             resource=spec.cli_name,
@@ -286,7 +295,13 @@ def build_crud_resource_app(spec: CrudResourceSpec) -> typer.Typer:
         global_options = GlobalOptions.from_updates(updates)
         validate_raw_allowed(raw=global_options.raw, command_path=f"{spec.cli_name} update")
         client, runtime_context = create_client(global_options)
-        item = fetch_resource_sync(client, helper_name=spec.helper_attr, item_id=resource_id)
+        full_perms = parse_bool(updates["full_perms"]) if "full_perms" in updates else False
+        item = fetch_resource_sync(
+            client,
+            helper_name=spec.helper_attr,
+            item_id=resource_id,
+            full_perms=full_perms,
+        )
         try:
             updated = update_resource_sync(item, fields=fields, only_changed=only_changed)
         except Exception as exc:  # pragma: no cover - defensive mapping
@@ -339,7 +354,13 @@ def build_crud_resource_app(spec: CrudResourceSpec) -> typer.Typer:
         global_options = GlobalOptions.from_updates(updates)
         validate_raw_allowed(raw=global_options.raw, command_path=f"{spec.cli_name} delete")
         client, runtime_context = create_client(global_options)
-        item = fetch_resource_sync(client, helper_name=spec.helper_attr, item_id=resource_id)
+        full_perms = parse_bool(updates["full_perms"]) if "full_perms" in updates else False
+        item = fetch_resource_sync(
+            client,
+            helper_name=spec.helper_attr,
+            item_id=resource_id,
+            full_perms=full_perms,
+        )
         try:
             deleted = delete_resource_sync(item)
         except Exception as exc:  # pragma: no cover - defensive mapping
