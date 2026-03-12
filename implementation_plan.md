@@ -36,7 +36,7 @@ Implement `pcli` in phased increments so each phase is shippable and testable, w
 - [x] `P2-T5` Build API client factory.
 - [x] `P3-T1` Implement document search adapter and canonical query/filter model.
 - [x] `P3-T2` Implement `docs find`.
-- [ ] `P3-T3` Implement `docs facets`.
+- [x] `P3-T3` Implement `docs facets`.
 - [ ] `P3-T4` Implement `docs peek`.
 - [ ] `P3-T5` Implement `docs skim`.
 - [ ] `P3-T6` Implement stdin/selector contract.
