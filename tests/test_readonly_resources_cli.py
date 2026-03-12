@@ -12,6 +12,7 @@ from typer.testing import CliRunner
 import pcli.cli.readonly_resources as readonly_cli
 from pcli.adapters.resource_handler import ListPage
 from pcli.cli.main import app
+from pcli.core.errors import UsageValidationError
 from pcli.core.runtime import RuntimeContext
 
 runner = CliRunner()
@@ -107,3 +108,45 @@ def test_readonly_resource_create_is_not_supported() -> None:
     result = runner.invoke(app, ["users", "create", "name=x"])
     assert result.exit_code == 2
     assert "No such command 'create'" in result.output
+
+
+def test_readonly_resource_rejects_invalid_inputs(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def fake_create_client(options: Any) -> tuple[object, RuntimeContext]:
+        _ = options
+        return object(), RuntimeContext(profile="default", url="https://example", token="token")
+
+    def fake_list_items(
+        client: Any,
+        *,
+        helper_name: str,
+        page: int,
+        page_size: int,
+        filters: dict[str, Any] | None = None,
+        full_perms: bool = False,
+    ) -> ListPage:
+        _ = (client, helper_name, page, page_size, filters, full_perms)
+        return ListPage(
+            items=[],
+            count=0,
+            page=page,
+            page_size=page_size,
+            next_page=None,
+            previous_page=None,
+        )
+
+    monkeypatch.setattr(readonly_cli, "create_client", fake_create_client)
+    monkeypatch.setattr(readonly_cli, "list_resource_sync", fake_list_items)
+
+    with pytest.raises(UsageValidationError) as invalid_page_size:
+        runner.invoke(app, ["users", "list", "page_size=0"], catch_exceptions=False)
+    assert invalid_page_size.value.payload.code == "INVALID_PAGE_SIZE"
+
+    with pytest.raises(UsageValidationError) as invalid_id:
+        runner.invoke(app, ["users", "get", "0"], catch_exceptions=False)
+    assert invalid_id.value.payload.code == "INVALID_ID"
+
+    with pytest.raises(UsageValidationError) as invalid_boolean:
+        runner.invoke(app, ["users", "list", "full_perms=maybe"], catch_exceptions=False)
+    assert invalid_boolean.value.payload.code == "INVALID_BOOLEAN"

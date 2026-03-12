@@ -92,3 +92,13 @@ def test_tasks_get_reports_not_found_and_invalid_ids(
     with pytest.raises(UsageValidationError) as invalid:
         runner.invoke(app, ["tasks", "get", "0"], catch_exceptions=False)
     assert invalid.value.payload.code == "INVALID_TASK_ID"
+
+
+def test_tasks_commands_reject_unexpected_tokens_and_invalid_booleans() -> None:
+    with pytest.raises(UsageValidationError) as unexpected:
+        runner.invoke(app, ["tasks", "list", "page=1"], catch_exceptions=False)
+    assert unexpected.value.payload.code == "UNEXPECTED_ARGS"
+
+    with pytest.raises(UsageValidationError) as invalid_boolean:
+        runner.invoke(app, ["tasks", "list", "verbose=maybe"], catch_exceptions=False)
+    assert invalid_boolean.value.payload.code == "INVALID_BOOLEAN"

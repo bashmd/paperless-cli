@@ -182,3 +182,41 @@ def test_crud_resource_delete_requires_confirmation() -> None:
     with pytest.raises(UsageValidationError) as exc:
         runner.invoke(app, ["tags", "delete", "3"], catch_exceptions=False)
     assert exc.value.payload.code == "CONFIRMATION_REQUIRED"
+
+
+def test_crud_resource_list_rejects_invalid_page_and_boolean(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def fake_create_client(options: Any) -> tuple[object, RuntimeContext]:
+        _ = options
+        return object(), RuntimeContext(profile="default", url="https://example", token="token")
+
+    def fake_list_items(
+        client: Any,
+        *,
+        helper_name: str,
+        page: int,
+        page_size: int,
+        filters: dict[str, Any] | None = None,
+        full_perms: bool = False,
+    ) -> ListPage:
+        _ = (client, helper_name, page, page_size, filters, full_perms)
+        return ListPage(
+            items=[],
+            count=0,
+            page=page,
+            page_size=page_size,
+            next_page=None,
+            previous_page=None,
+        )
+
+    monkeypatch.setattr(crud_cli, "create_client", fake_create_client)
+    monkeypatch.setattr(crud_cli, "list_resource_sync", fake_list_items)
+
+    with pytest.raises(UsageValidationError) as invalid_page:
+        runner.invoke(app, ["tags", "list", "page=0"], catch_exceptions=False)
+    assert invalid_page.value.payload.code == "INVALID_PAGE"
+
+    with pytest.raises(UsageValidationError) as invalid_boolean:
+        runner.invoke(app, ["tags", "list", "full_perms=maybe"], catch_exceptions=False)
+    assert invalid_boolean.value.payload.code == "INVALID_BOOLEAN"

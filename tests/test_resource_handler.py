@@ -244,3 +244,21 @@ def test_serialize_resource_helpers_and_error_detail_extraction() -> None:
             self.payload = {"detail": "server rejected"}
 
     assert mutation_error_details(_WithPayload())["server_payload"] == {"detail": "server rejected"}
+
+
+def test_list_resource_rejects_non_positive_pagination_values() -> None:
+    client = _FakeClient()
+    with pytest.raises(UsageValidationError) as page_exc:
+        list_resource_sync(client, helper_name="tags", page=0, page_size=10)
+    assert page_exc.value.payload.code == "INVALID_PAGE"
+
+    with pytest.raises(UsageValidationError) as size_exc:
+        list_resource_sync(client, helper_name="tags", page=1, page_size=0)
+    assert size_exc.value.payload.code == "INVALID_PAGE_SIZE"
+
+
+def test_missing_helper_path_raises_unsupported_resource() -> None:
+    client = _FakeClient()
+    with pytest.raises(UsageValidationError) as exc:
+        fetch_resource_sync(client, helper_name="workflows.missing", item_id=1)
+    assert exc.value.payload.code == "UNSUPPORTED_RESOURCE"
