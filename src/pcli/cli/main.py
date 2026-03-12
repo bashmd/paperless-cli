@@ -7,6 +7,7 @@ from typing import Annotated
 import typer
 
 from pcli import __version__
+from pcli.adapters.client import close_open_clients_sync
 from pcli.cli.auth import app as auth_app
 from pcli.cli.crud_resources import CRUD_RESOURCE_SPECS, build_crud_resource_app
 from pcli.cli.docs import app as docs_app
@@ -87,3 +88,5 @@ def main() -> None:
     except PcliError as exc:
         typer.echo(to_json(render_error(exc.payload)))
         raise SystemExit(int(exc.exit_code)) from exc
+    finally:
+        close_open_clients_sync()

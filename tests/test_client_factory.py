@@ -2,12 +2,14 @@
 
 from __future__ import annotations
 
+from collections.abc import Iterator
 from pathlib import Path
 
 import pytest
 from pypaperless import Paperless
 
-from pcli.adapters.client import create_client
+import pcli.adapters.client as client_factory
+from pcli.adapters.client import close_open_clients_sync, create_client
 from pcli.adapters.storage import (
     ConfigData,
     ConfigStore,
@@ -17,6 +19,12 @@ from pcli.adapters.storage import (
 )
 from pcli.core.errors import AuthFailureError, UsageValidationError
 from pcli.core.options import GlobalOptions
+
+
+@pytest.fixture(autouse=True)
+def _cleanup_open_clients() -> Iterator[None]:
+    yield
+    close_open_clients_sync()
 
 
 def _write_profile_data(
@@ -77,3 +85,18 @@ def test_create_client_requires_token(tmp_path: Path) -> None:
     with pytest.raises(AuthFailureError) as exc:
         create_client(GlobalOptions(), paths=paths)
     assert exc.value.payload.code == "AUTH_TOKEN_MISSING"
+
+
+def test_close_open_clients_sync_clears_registered_clients() -> None:
+    class _FakeClient:
+        def __init__(self) -> None:
+            self.close_calls = 0
+
+        async def close(self) -> None:
+            self.close_calls += 1
+
+    fake = _FakeClient()
+    client_factory._OPEN_CLIENTS.append(fake)  # type: ignore[arg-type]
+    close_open_clients_sync()
+    assert fake.close_calls == 1
+    assert client_factory._OPEN_CLIENTS == []

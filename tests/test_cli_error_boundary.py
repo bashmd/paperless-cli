@@ -76,3 +76,21 @@ def test_main_maps_network_error_to_exit_code_7(
     payload = json.loads(capsys.readouterr().out.strip())
     assert payload["ok"] is False
     assert payload["error"]["code"] == "AUTH_NETWORK_TIMEOUT"
+
+
+def test_main_always_runs_client_cleanup(monkeypatch: pytest.MonkeyPatch) -> None:
+    calls = {"count": 0}
+
+    def fake_app(*, standalone_mode: bool = False) -> None:  # noqa: ARG001
+        raise UsageValidationError("boom", error_code="BAD_INPUT")
+
+    def fake_cleanup() -> None:
+        calls["count"] += 1
+
+    monkeypatch.setattr(cli_main, "app", fake_app)
+    monkeypatch.setattr(cli_main, "close_open_clients_sync", fake_cleanup)
+
+    with pytest.raises(SystemExit):
+        cli_main.main()
+
+    assert calls["count"] == 1
