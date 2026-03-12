@@ -53,7 +53,7 @@ Implement `pcli` in phased increments so each phase is shippable and testable, w
 - [x] `P4-T8` Implement document mutations.
 - [x] `P5-T1` Build reusable resource handler abstraction.
 - [x] `P5-T2` Implement CRUD resources.
-- [ ] `P5-T3` Implement read-only resources.
+- [x] `P5-T3` Implement read-only resources.
 - [ ] `P5-T4` Implement singleton reads.
 - [ ] `P5-T5` Implement tasks endpoint.
 - [ ] `P5-T6` Implement permissions expansion option.

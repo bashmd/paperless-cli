@@ -11,6 +11,7 @@ from pcli.cli.auth import app as auth_app
 from pcli.cli.crud_resources import CRUD_RESOURCE_SPECS, build_crud_resource_app
 from pcli.cli.docs import app as docs_app
 from pcli.cli.docs import docs_get
+from pcli.cli.readonly_resources import READ_ONLY_RESOURCE_SPECS, build_readonly_resource_app
 from pcli.core.errors import PcliError
 from pcli.core.output import render_error, to_json
 
@@ -24,6 +25,8 @@ app.add_typer(auth_app, name="auth")
 app.add_typer(docs_app, name="docs")
 for crud_spec in CRUD_RESOURCE_SPECS:
     app.add_typer(build_crud_resource_app(crud_spec), name=crud_spec.cli_name)
+for readonly_spec in READ_ONLY_RESOURCE_SPECS:
+    app.add_typer(build_readonly_resource_app(readonly_spec), name=readonly_spec.cli_name)
 
 
 @app.command(

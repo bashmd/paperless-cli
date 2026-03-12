@@ -113,11 +113,18 @@ class _FakeHelper:
         return _iterator()
 
 
+class _FakeWorkflows:
+    def __init__(self) -> None:
+        self.actions = _FakeHelper()
+        self.triggers = _FakeHelper()
+
+
 class _FakeClient:
     def __init__(self) -> None:
         self.is_initialized = False
         self.init_calls = 0
         self.tags = _FakeHelper()
+        self.workflows = _FakeWorkflows()
 
     async def initialize(self) -> None:
         self.init_calls += 1
@@ -181,6 +188,24 @@ def test_resource_crud_sync_helpers() -> None:
 
     deleted = delete_resource_sync(item)
     assert deleted is True
+
+
+def test_resource_helpers_support_dotted_helper_paths() -> None:
+    client = _FakeClient()
+
+    action = fetch_resource_sync(client, helper_name="workflows.actions", item_id=5)
+    assert isinstance(action, _FakeItem)
+    assert action.id == 5
+
+    page = list_resource_sync(
+        client,
+        helper_name="workflows.triggers",
+        page=1,
+        page_size=10,
+        filters={"name__icontains": "auto"},
+    )
+    assert page.count == 1
+    assert client.workflows.triggers._last_reduce_kwargs == {"name__icontains": "auto"}
 
 
 def test_create_resource_rejects_unknown_fields() -> None:

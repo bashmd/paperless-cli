@@ -141,14 +141,16 @@ async def _ensure_initialized(client: Any) -> None:
 
 
 def _resolve_helper(client: Any, helper_name: str) -> Any:
-    helper = getattr(client, helper_name, None)
-    if helper is None:
-        raise UsageValidationError(
-            "Resource helper is not available.",
-            details={"resource": helper_name},
-            error_code="UNSUPPORTED_RESOURCE",
-        )
-    return helper
+    current = client
+    for attr in helper_name.split("."):
+        current = getattr(current, attr, None)
+        if current is None:
+            raise UsageValidationError(
+                "Resource helper is not available.",
+                details={"resource": helper_name, "segment": attr},
+                error_code="UNSUPPORTED_RESOURCE",
+            )
+    return current
 
 
 async def list_resource(
