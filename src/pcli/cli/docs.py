@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 import datetime as dt
+import json
 import re
+import sys
 from collections import Counter
 from dataclasses import replace
 from typing import Annotated, Any
@@ -14,7 +16,7 @@ from pcli.adapters.client import create_client
 from pcli.adapters.document_search import DocumentSearchAdapter
 from pcli.cli.io import emit_success
 from pcli.core.errors import UsageValidationError
-from pcli.core.options import GlobalOptions, parse_scalar
+from pcli.core.options import GlobalOptions, parse_bool, parse_scalar
 from pcli.core.parsing import parse_tokens
 from pcli.core.validation import validate_raw_allowed
 from pcli.models.discovery import DEFAULT_DISCOVERY_SORT, canonicalize_document_search
@@ -40,6 +42,15 @@ _FIND_KNOWN_OPTION_KEYS = {
 }
 _DEFAULT_FIND_FIELDS = ["id", "title", "created", "score", "snippet"]
 _SNIPPET_MAX_CHARS = 240
+_PEEK_KNOWN_OPTION_KEYS = _FIND_KNOWN_OPTION_KEYS | {
+    "ids",
+    "from_stdin",
+    "per_doc_max_chars",
+    "max_chars",
+}
+_DEFAULT_PEEK_FIELDS = ["id", "title", "created", "tags", "excerpt"]
+_DEFAULT_PEEK_MAX_DOCS = 20
+_DEFAULT_PEEK_MAX_CHARS = 1200
 _FACETS_KNOWN_OPTION_KEYS = _FIND_KNOWN_OPTION_KEYS | {"by", "facet_scope", "top_values"}
 _DEFAULT_FACET_SCOPE = "page"
 _DEFAULT_TOP_VALUES = 20
@@ -54,9 +65,9 @@ _FACET_FIELD_MAP = {
 }
 
 
-def _parse_fields(value: str | None) -> list[str]:
+def _parse_fields(value: str | None, *, default_fields: list[str]) -> list[str]:
     if value is None:
-        return list(_DEFAULT_FIND_FIELDS)
+        return list(default_fields)
     parsed = parse_scalar(value)
     raw_items: list[Any]
     if isinstance(parsed, list):
@@ -76,6 +87,25 @@ def _parse_fields(value: str | None) -> list[str]:
             error_code="INVALID_FIELDS",
         )
     return fields
+
+
+def _parse_positive_int(
+    *,
+    value: str | None,
+    default: int,
+    field_name: str,
+    error_code: str,
+) -> int:
+    if value is None:
+        return default
+    parsed = parse_scalar(value)
+    if not isinstance(parsed, int) or isinstance(parsed, bool) or parsed <= 0:
+        raise UsageValidationError(
+            f"{field_name} must be a positive integer.",
+            details={"value": value},
+            error_code=error_code,
+        )
+    return parsed
 
 
 def _normalize_scalar_output(value: Any) -> Any:
@@ -145,6 +175,120 @@ def _project_find_document(document: Any, fields: list[str]) -> dict[str, Any]:
             projected[field_name] = _synthesize_snippet(document)
             continue
         projected[field_name] = _normalize_scalar_output(getattr(document, field_name, None))
+    return projected
+
+
+def _parse_ids(value: str | None) -> list[int]:
+    if value is None:
+        return []
+    parsed = parse_scalar(value)
+    raw_items: list[Any]
+    if isinstance(parsed, list):
+        raw_items = parsed
+    else:
+        raw_items = [part for part in value.split(",")]
+
+    ids: list[int] = []
+    for raw_item in raw_items:
+        try:
+            item_id = int(str(raw_item).strip())
+        except ValueError as exc:
+            raise UsageValidationError(
+                "ids must contain integers.",
+                details={"value": raw_item},
+                error_code="INVALID_IDS",
+            ) from exc
+        if item_id <= 0:
+            raise UsageValidationError(
+                "ids must contain positive integers.",
+                details={"value": raw_item},
+                error_code="INVALID_IDS",
+            )
+        ids.append(item_id)
+    return ids
+
+
+def _read_stdin_ids() -> list[int]:
+    payload = sys.stdin.read()
+    if not payload.strip():
+        return []
+    ids: list[int] = []
+    for line in payload.splitlines():
+        token = line.strip()
+        if not token:
+            continue
+        try:
+            ids.append(int(token))
+            continue
+        except ValueError:
+            pass
+        try:
+            obj = json.loads(token)
+        except json.JSONDecodeError:
+            continue
+        if not isinstance(obj, dict):
+            continue
+        record_type = obj.get("type")
+        if record_type in {"summary", "error"}:
+            continue
+        candidate = obj.get("id", obj.get("doc_id"))
+        if candidate is None:
+            continue
+        try:
+            ids.append(int(candidate))
+        except (TypeError, ValueError):
+            continue
+    return ids
+
+
+def _peek_source_text(document: Any) -> str:
+    content = getattr(document, "content", None)
+    if isinstance(content, str):
+        normalized = re.sub(r"\s+", " ", content).strip()
+        if normalized:
+            return normalized
+
+    search_hit = getattr(document, "search_hit", None)
+    highlights = []
+    if search_hit is not None:
+        highlights = [
+            getattr(search_hit, "highlights", None),
+            getattr(search_hit, "note_highlights", None),
+        ]
+    for highlight in highlights:
+        if isinstance(highlight, str):
+            normalized = re.sub(r"\s+", " ", highlight).strip()
+            if normalized:
+                return normalized
+    return ""
+
+
+def _build_peek_excerpt(document: Any, *, max_chars: int) -> tuple[str, int, bool]:
+    source = _peek_source_text(document)
+    if len(source) <= max_chars:
+        return source, len(source), False
+    if max_chars <= 3:
+        excerpt = source[:max_chars]
+        return excerpt, len(excerpt), True
+    excerpt = source[: max_chars - 3].rstrip() + "..."
+    return excerpt, len(excerpt), True
+
+
+def _project_peek_document(
+    document: Any,
+    fields: list[str],
+    *,
+    max_chars: int,
+) -> dict[str, Any]:
+    excerpt, char_count, truncated = _build_peek_excerpt(document, max_chars=max_chars)
+    projected: dict[str, Any] = {}
+    for field_name in fields:
+        if field_name == "excerpt":
+            projected[field_name] = excerpt
+            continue
+        projected[field_name] = _normalize_scalar_output(getattr(document, field_name, None))
+    projected["chars"] = char_count
+    projected["truncated"] = truncated
     return projected
 
 
@@ -297,7 +441,7 @@ def docs_find(
         sort=parsed.updates.get("sort"),
         filters=parsed.passthrough_filters,
     )
-    fields = _parse_fields(parsed.updates.get("fields"))
+    fields = _parse_fields(parsed.updates.get("fields"), default_fields=_DEFAULT_FIND_FIELDS)
 
     global_options = GlobalOptions.from_updates(parsed.updates)
     validate_raw_allowed(raw=global_options.raw, command_path="docs find")
@@ -323,6 +467,139 @@ def docs_find(
             "max_docs": search.max_docs,
             "query": search.query,
             "sort": search.sort,
+            "profile": runtime_context.profile,
+        },
+    )
+
+
+@app.command(
+    "peek",
+    context_settings={"allow_extra_args": True, "ignore_unknown_options": True},
+)
+def docs_peek(
+    ctx: typer.Context,
+    tokens: Annotated[
+        list[str] | None,
+        typer.Argument(help="Selector/query/filter options."),
+    ] = None,
+) -> None:
+    """Return one lightweight excerpt per selected document."""
+    raw_tokens = [*(tokens or []), *ctx.args]
+    parsed = parse_tokens(
+        raw_tokens,
+        known_option_keys=_PEEK_KNOWN_OPTION_KEYS,
+        passthrough_filter_mode=True,
+        boolean_option_keys={"raw", "verbose", "from_stdin"},
+        strict_boolean_values=True,
+    )
+    if parsed.positional or parsed.passthrough_tokens:
+        raise UsageValidationError(
+            "docs peek accepts only key=value or --option arguments.",
+            details={"positional": parsed.positional, "tokens": parsed.passthrough_tokens},
+            error_code="UNEXPECTED_ARGS",
+        )
+
+    from_stdin = False
+    if "from_stdin" in parsed.updates:
+        from_stdin = parse_bool(parsed.updates["from_stdin"])
+
+    explicit_ids = _parse_ids(parsed.updates.get("ids"))
+    if from_stdin and explicit_ids:
+        raise UsageValidationError(
+            "from_stdin=true cannot be combined with ids=...",
+            error_code="MUTUALLY_EXCLUSIVE_SELECTORS",
+        )
+    stdin_ids = _read_stdin_ids() if from_stdin else []
+    selected_ids = explicit_ids or stdin_ids
+    query = parsed.updates.get("query")
+    has_query = query is not None and bool(str(query).strip())
+    if not has_query and not selected_ids and not from_stdin:
+        raise UsageValidationError(
+            "docs peek requires one selector: ids=..., query=..., or from_stdin=true.",
+            error_code="MISSING_SELECTOR",
+        )
+
+    max_chars_value = parsed.updates.get("per_doc_max_chars", parsed.updates.get("max_chars"))
+    per_doc_max_chars = _parse_positive_int(
+        value=max_chars_value,
+        default=_DEFAULT_PEEK_MAX_CHARS,
+        field_name="per_doc_max_chars",
+        error_code="INVALID_PER_DOC_MAX_CHARS",
+    )
+    fields = _parse_fields(parsed.updates.get("fields"), default_fields=_DEFAULT_PEEK_FIELDS)
+
+    filters: dict[str, Any] = dict(parsed.passthrough_filters)
+    if selected_ids:
+        filters["id__in"] = selected_ids
+
+    max_docs_value = parsed.updates.get("max_docs")
+    top_value = parsed.updates.get("top")
+    if max_docs_value is None and top_value is None:
+        max_docs_value = str(len(selected_ids) if selected_ids else _DEFAULT_PEEK_MAX_DOCS)
+
+    search = canonicalize_document_search(
+        query=query,
+        custom_field_query=parsed.updates.get("custom_field_query"),
+        page=parsed.updates.get("page"),
+        page_size=parsed.updates.get("page_size"),
+        max_docs=max_docs_value,
+        top=top_value,
+        sort=parsed.updates.get("sort"),
+        filters=filters,
+    )
+
+    global_options = GlobalOptions.from_updates(parsed.updates)
+    validate_raw_allowed(raw=global_options.raw, command_path="docs peek")
+
+    if from_stdin and not selected_ids and not has_query:
+        emit_success(
+            resource="docs",
+            action="peek",
+            data={"items": []},
+            meta={
+                "count": 0,
+                "max_docs": 0,
+                "per_doc_max_chars": per_doc_max_chars,
+                "from_stdin": True,
+                "query": None,
+                "profile": global_options.profile or "default",
+            },
+        )
+        return
+
+    client, runtime_context = create_client(global_options)
+    adapter = DocumentSearchAdapter()
+    documents = adapter.collect_documents_sync(client, search)
+
+    if selected_ids:
+        rank = {doc_id: index for index, doc_id in enumerate(selected_ids)}
+        fallback_rank = len(rank)
+
+        def _selector_rank(document: Any) -> int:
+            doc_id = getattr(document, "id", None)
+            if not isinstance(doc_id, int):
+                return fallback_rank
+            return rank.get(doc_id, fallback_rank)
+
+        documents = sorted(
+            documents,
+            key=_selector_rank,
+        )
+
+    rows = [
+        _project_peek_document(document, fields, max_chars=per_doc_max_chars)
+        for document in documents
+    ]
+    emit_success(
+        resource="docs",
+        action="peek",
+        data={"items": rows},
+        meta={
+            "count": len(rows),
+            "max_docs": search.max_docs,
+            "per_doc_max_chars": per_doc_max_chars,
+            "from_stdin": from_stdin,
+            "query": search.query,
             "profile": runtime_context.profile,
         },
     )
