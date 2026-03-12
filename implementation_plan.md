@@ -44,7 +44,7 @@ Implement `pcli` in phased increments so each phase is shippable and testable, w
 - [x] `P3-T8` Implement budget controls and alias normalization.
 - [x] `P3-T9` Implement cursor rules.
 - [x] `P4-T1` Implement `pcli get` alias to `docs get`.
-- [ ] `P4-T2` Implement page spec parser.
+- [x] `P4-T2` Implement page spec parser.
 - [ ] `P4-T3` Implement source strategy.
 - [ ] `P4-T4` Implement `docs list/search/more-like`.
 - [ ] `P4-T5` Implement binary endpoints.
