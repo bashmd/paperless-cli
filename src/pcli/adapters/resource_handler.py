@@ -275,6 +275,26 @@ def fetch_resource_sync(
     )
 
 
+async def fetch_singleton(
+    client: Any,
+    *,
+    helper_name: str,
+) -> Any:
+    """Fetch singleton-style resources backed by zero-argument helpers."""
+    await _ensure_initialized(client)
+    helper = _resolve_helper(client, helper_name)
+    return await helper()
+
+
+def fetch_singleton_sync(
+    client: Any,
+    *,
+    helper_name: str,
+) -> Any:
+    """Synchronous wrapper for fetch_singleton."""
+    return asyncio.run(fetch_singleton(client, helper_name=helper_name))
+
+
 async def create_resource(
     client: Any,
     *,

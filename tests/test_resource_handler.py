@@ -14,6 +14,7 @@ from pcli.adapters.resource_handler import (
     create_resource_sync,
     delete_resource_sync,
     fetch_resource_sync,
+    fetch_singleton_sync,
     list_resource_sync,
     mutation_error_details,
     require_confirmation,
@@ -125,10 +126,16 @@ class _FakeClient:
         self.init_calls = 0
         self.tags = _FakeHelper()
         self.workflows = _FakeWorkflows()
+        self.status: Any = None
 
     async def initialize(self) -> None:
         self.init_calls += 1
         self.is_initialized = True
+
+
+class _FakeSingletonHelper:
+    async def __call__(self) -> _FakeItem:
+        return _FakeItem(99)
 
 
 def test_mutation_field_helpers_and_confirmation() -> None:
@@ -206,6 +213,14 @@ def test_resource_helpers_support_dotted_helper_paths() -> None:
     )
     assert page.count == 1
     assert client.workflows.triggers._last_reduce_kwargs == {"name__icontains": "auto"}
+
+
+def test_fetch_singleton_sync() -> None:
+    client = _FakeClient()
+    client.status = _FakeSingletonHelper()
+    item = fetch_singleton_sync(client, helper_name="status")
+    assert isinstance(item, _FakeItem)
+    assert item.id == 99
 
 
 def test_create_resource_rejects_unknown_fields() -> None:
