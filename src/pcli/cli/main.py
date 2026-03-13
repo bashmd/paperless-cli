@@ -12,6 +12,7 @@ from pcli.cli.auth import app as auth_app
 from pcli.cli.crud_resources import CRUD_RESOURCE_SPECS, build_crud_resource_app
 from pcli.cli.docs import app as docs_app
 from pcli.cli.docs import docs_get
+from pcli.cli.install import install_command
 from pcli.cli.readonly_resources import READ_ONLY_RESOURCE_SPECS, build_readonly_resource_app
 from pcli.cli.singleton_resources import SINGLETON_RESOURCE_SPECS, build_singleton_resource_app
 from pcli.cli.tasks_resource import app as tasks_app
@@ -52,6 +53,21 @@ def get_alias(
 ) -> None:
     """Alias for `pcli docs get`."""
     docs_get(ctx=ctx, document_id=document_id, tokens=tokens)
+
+
+@app.command(
+    "install",
+    context_settings={"allow_extra_args": True, "ignore_unknown_options": True},
+)
+def install(
+    ctx: typer.Context,
+    tokens: Annotated[
+        list[str] | None,
+        typer.Argument(help="Install options."),
+    ] = None,
+) -> None:
+    """Install pcli globally via uv tool install."""
+    install_command(ctx=ctx, tokens=tokens)
 
 
 def _version_callback(value: bool) -> None:

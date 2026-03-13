@@ -66,6 +66,9 @@ Implement `pcli` in phased increments so each phase is shippable and testable, w
 - [x] `OPT-T2` Re-benchmark and re-profile discovery hot paths after Rust integration.
 - [x] `OPT-T3` Add ripgrep-style (`format=rg`) discovery output and make it default for find/peek/skim.
 - [ ] `OPT-T4` Add per-document size signals (`content_chars`, optional `token_estimate`) to discovery output for ingest routing.
+- [x] `P7-T1` Add `pcli install` bootstrap command for `uv tool install`.
+- [x] `P7-T2` Document one-command install and upgrade flows.
+- [x] `P7-T3` Add installer command tests (success paths + failure mapping).
 
 ## 3. Phase Breakdown
 
@@ -307,6 +310,33 @@ Objective: finalize quality, performance, and operator guidance.
 2. Benchmark thresholds are documented for regression tracking.
 3. Cookbook examples run as documented.
 4. Release checklist is complete and executable.
+
+## Phase 7 - Install Ergonomics
+
+Objective: make global installation of `pcli` trivial and predictable for operators and LLM agents.
+
+### Tasks
+
+1. `P7-T1` Add top-level `pcli install` command:
+   - accepts `from=<source>`, `reinstall=...`, `editable=...`, `python=...`
+   - infers source when possible from package metadata
+   - executes `uv tool install --from <source> pcli`.
+2. `P7-T2` Update install documentation:
+   - direct global install via `uv tool install --from ... pcli`
+   - one-command bootstrap via `uvx --from ... pcli install`
+   - upgrade and verification commands.
+3. `P7-T3` Add tests for installer behavior:
+   - inferred source path
+   - explicit source + flags
+   - missing source validation error
+   - subprocess failure mapped to deterministic error code.
+
+### Acceptance Criteria
+
+1. `pcli install from=<source>` returns success envelope and installs to tool bin path (`~/.local/bin` in typical uv setup).
+2. Missing source without inferable metadata fails with `MISSING_INSTALL_SOURCE` (exit code `2`).
+3. Installer subprocess failures return `INSTALL_FAILED` with command/return code context.
+4. README includes copy-paste installation, upgrade, and verification examples.
 
 ## 4. Cross-Phase Dependencies
 
