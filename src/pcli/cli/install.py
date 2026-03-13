@@ -119,25 +119,38 @@ def _build_uv_install_command(source: str, updates: dict[str, str]) -> list[str]
 
 
 def _run_install_command(command: list[str]) -> subprocess.CompletedProcess[str]:
+    env = _uv_global_env()
     return subprocess.run(
         command,
         check=False,
         capture_output=True,
         text=True,
+        env=env,
     )
 
 
 def _run_uv_tool_dir(uv_bin: str) -> subprocess.CompletedProcess[str]:
+    env = _uv_global_env()
     return subprocess.run(
         [uv_bin, "tool", "dir", "--bin"],
         check=False,
         capture_output=True,
         text=True,
+        env=env,
     )
 
 
 def _shell_render(command: list[str]) -> str:
     return " ".join(shlex.quote(part) for part in command)
+
+
+def _uv_global_env() -> dict[str, str]:
+    env = dict(os.environ)
+    # `uvx` sets these to its own tool/bin paths; clear them so installation
+    # targets the user's normal uv tool location.
+    env.pop("UV_TOOL_BIN_DIR", None)
+    env.pop("UV_TOOL_DIR", None)
+    return env
 
 
 def _failure_details(

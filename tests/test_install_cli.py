@@ -138,3 +138,17 @@ def test_install_failure_raises_pcli_error(
         runner.invoke(app, ["install"], catch_exceptions=False)
 
     assert exc.value.payload.code == "INSTALL_FAILED"
+
+
+def test_uv_global_env_removes_uv_tool_overrides(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("UV_TOOL_BIN_DIR", "/tmp/uvx-bin")
+    monkeypatch.setenv("UV_TOOL_DIR", "/tmp/uvx-tools")
+    monkeypatch.setenv("PCLI_TEST_KEEP", "1")
+
+    env = install_cli._uv_global_env()
+
+    assert "UV_TOOL_BIN_DIR" not in env
+    assert "UV_TOOL_DIR" not in env
+    assert env["PCLI_TEST_KEEP"] == "1"
