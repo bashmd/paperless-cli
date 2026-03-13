@@ -69,6 +69,7 @@ Implement `pcli` in phased increments so each phase is shippable and testable, w
 - [x] `P7-T1` Add `pcli install` bootstrap command for `uv tool install`.
 - [x] `P7-T2` Document one-command install and upgrade flows.
 - [x] `P7-T3` Add installer command tests (success paths + failure mapping).
+- [x] `P7-T4` Add optional Rust-extension bootstrap in `pcli install` (`rust=auto|true|false`).
 
 ## 3. Phase Breakdown
 
@@ -330,6 +331,10 @@ Objective: make global installation of `pcli` trivial and predictable for operat
    - explicit source + flags
    - missing source validation error
    - subprocess failure mapped to deterministic error code.
+4. `P7-T4` Add optional Rust-extension install path:
+   - default `rust=auto` to attempt extension build when toolchain exists
+   - `rust=true` to require extension install
+   - `rust=false` to skip extension install explicitly.
 
 ### Acceptance Criteria
 
@@ -337,6 +342,7 @@ Objective: make global installation of `pcli` trivial and predictable for operat
 2. Missing source without inferable metadata fails with `MISSING_INSTALL_SOURCE` (exit code `2`).
 3. Installer subprocess failures return `INSTALL_FAILED` with command/return code context.
 4. README includes copy-paste installation, upgrade, and verification examples.
+5. `pcli install` reports Rust-extension install status and behaves deterministically across `rust=auto|true|false`.
 
 ## 4. Cross-Phase Dependencies
 

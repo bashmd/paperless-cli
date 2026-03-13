@@ -10,6 +10,7 @@ import subprocess
 from importlib import metadata
 from pathlib import Path
 from typing import Annotated, Any
+from urllib.parse import unquote, urlparse
 
 import typer
 
@@ -18,7 +19,7 @@ from pcli.core.errors import PcliError, UsageValidationError
 from pcli.core.options import parse_bool
 from pcli.core.parsing import parse_tokens
 
-_INSTALL_KNOWN_OPTION_KEYS = {"from", "reinstall", "editable", "python"}
+_INSTALL_KNOWN_OPTION_KEYS = {"from", "reinstall", "editable", "python", "rust"}
 
 
 def _resolve_install_source(explicit_source: str | None) -> str:
@@ -118,7 +119,46 @@ def _build_uv_install_command(source: str, updates: dict[str, str]) -> list[str]
     return command
 
 
+def _parse_rust_mode(raw_value: str | None) -> str:
+    if raw_value is None:
+        return "auto"
+    normalized = raw_value.strip().lower()
+    if normalized == "auto":
+        return "auto"
+    try:
+        enabled = parse_bool(raw_value)
+    except UsageValidationError as exc:
+        raise UsageValidationError(
+            "rust must be one of: auto, true, false.",
+            details={"value": raw_value},
+            error_code="INVALID_RUST_MODE",
+        ) from exc
+    return "true" if enabled else "false"
+
+
 def _run_install_command(command: list[str]) -> subprocess.CompletedProcess[str]:
+    env = _uv_global_env()
+    return subprocess.run(
+        command,
+        check=False,
+        capture_output=True,
+        text=True,
+        env=env,
+    )
+
+
+def _run_uv_tool_dir_command(uv_bin: str) -> subprocess.CompletedProcess[str]:
+    env = _uv_global_env()
+    return subprocess.run(
+        [uv_bin, "tool", "dir"],
+        check=False,
+        capture_output=True,
+        text=True,
+        env=env,
+    )
+
+
+def _run_rust_install_command(command: list[str]) -> subprocess.CompletedProcess[str]:
     env = _uv_global_env()
     return subprocess.run(
         command,
@@ -140,6 +180,128 @@ def _uv_global_env() -> dict[str, str]:
     env.pop("UV_TOOL_BIN_DIR", None)
     env.pop("UV_TOOL_DIR", None)
     return env
+
+
+def _resolve_tool_python(uv_bin: str) -> str | None:
+    result = _run_uv_tool_dir_command(uv_bin)
+    if result.returncode != 0:
+        return None
+    tools_dir = (result.stdout or "").strip()
+    if not tools_dir:
+        return None
+    if os.name == "nt":
+        candidate = Path(tools_dir) / "pcli" / "Scripts" / "python.exe"
+    else:
+        candidate = Path(tools_dir) / "pcli" / "bin" / "python"
+    if not candidate.exists():
+        return None
+    return str(candidate)
+
+
+def _derive_rust_requirement(source: str) -> str | None:
+    if source.startswith(("git+", "hg+", "svn+", "bzr+")):
+        if "#subdirectory=" in source:
+            return source
+        if "#" in source:
+            return f"{source}&subdirectory=rust/pcli_rust_norm"
+        return f"{source}#subdirectory=rust/pcli_rust_norm"
+
+    local_path = _source_to_local_path(source)
+    if local_path is None:
+        return None
+    crate_dir = local_path / "rust" / "pcli_rust_norm"
+    if not crate_dir.is_dir():
+        return None
+    return str(crate_dir)
+
+
+def _source_to_local_path(source: str) -> Path | None:
+    parsed = urlparse(source)
+    if parsed.scheme == "file":
+        decoded = unquote(parsed.path)
+        if os.name == "nt" and decoded.startswith("/") and len(decoded) > 2 and decoded[2] == ":":
+            decoded = decoded[1:]
+        candidate = Path(decoded)
+    elif parsed.scheme:
+        return None
+    else:
+        candidate = Path(source).expanduser()
+    try:
+        resolved = candidate.resolve()
+    except OSError:
+        return None
+    if not resolved.is_dir():
+        return None
+    return resolved
+
+
+def _rust_toolchain_available() -> bool:
+    return shutil.which("cargo") is not None and shutil.which("rustc") is not None
+
+
+def _build_uv_rust_install_command(*, uv_bin: str, tool_python: str, requirement: str) -> list[str]:
+    return [uv_bin, "pip", "install", "--python", tool_python, "--reinstall", requirement]
+
+
+def _install_optional_rust_extension(*, source: str, uv_bin: str, mode: str) -> dict[str, Any]:
+    if mode == "false":
+        return {"mode": mode, "status": "skipped", "reason": "disabled"}
+
+    if not _rust_toolchain_available():
+        if mode == "true":
+            raise PcliError(
+                "Rust toolchain not found.",
+                details={"hint": "Install Rust (cargo/rustc) or run with rust=false."},
+                error_code="RUST_TOOLCHAIN_MISSING",
+            )
+        return {"mode": mode, "status": "skipped", "reason": "toolchain_missing"}
+
+    requirement = _derive_rust_requirement(source)
+    if requirement is None:
+        if mode == "true":
+            raise PcliError(
+                "Could not derive Rust extension source from install source.",
+                details={"source": source, "hint": "Use from=<repo-root> or a VCS source."},
+                error_code="RUST_SOURCE_UNSUPPORTED",
+            )
+        return {"mode": mode, "status": "skipped", "reason": "source_unsupported"}
+
+    tool_python = _resolve_tool_python(uv_bin)
+    if tool_python is None:
+        if mode == "true":
+            raise PcliError(
+                "Could not locate installed pcli tool environment.",
+                details={"hint": "Try running install again or use rust=false."},
+                error_code="TOOL_ENV_NOT_FOUND",
+            )
+        return {"mode": mode, "status": "skipped", "reason": "tool_env_missing"}
+
+    command = _build_uv_rust_install_command(
+        uv_bin=uv_bin,
+        tool_python=tool_python,
+        requirement=requirement,
+    )
+    result = _run_rust_install_command(command)
+    if result.returncode != 0:
+        if mode == "true":
+            raise PcliError(
+                "Rust extension install failed.",
+                details=_failure_details(result, command=command),
+                error_code="RUST_INSTALL_FAILED",
+            )
+        return {
+            "mode": mode,
+            "status": "failed",
+            "reason": "install_failed",
+            "details": _failure_details(result, command=command),
+        }
+
+    return {
+        "mode": mode,
+        "status": "installed",
+        "requirement": requirement,
+        "command": _shell_render(command),
+    }
 
 
 def _failure_details(
@@ -164,6 +326,7 @@ def _success_data(
     *,
     source: str,
     command: list[str],
+    rust: dict[str, Any],
 ) -> dict[str, Any]:
     executable = "pcli.exe" if os.name == "nt" else "pcli"
     default_bin = Path.home() / ".local" / "bin" / executable
@@ -172,6 +335,7 @@ def _success_data(
         "source": source,
         "command": _shell_render(command),
         "bin_path": str(default_bin),
+        "rust": rust,
     }
 
 
@@ -179,12 +343,18 @@ def install_command(
     ctx: typer.Context,
     tokens: Annotated[
         list[str] | None,
-        typer.Argument(help="Install options. Supports from=..., reinstall=..., editable=...."),
+        typer.Argument(
+            help=(
+                "Install options. Supports from=..., reinstall=..., editable=..., "
+                "python=..., rust=auto|true|false."
+            ),
+        ),
     ] = None,
 ) -> None:
     """Install pcli as a uv tool (default target: ~/.local/bin/pcli)."""
     updates = _parse_install_tokens([*(tokens or []), *ctx.args])
     source = _resolve_install_source(updates.get("from"))
+    rust_mode = _parse_rust_mode(updates.get("rust"))
     command = _build_uv_install_command(source, updates)
     result = _run_install_command(command)
     if result.returncode != 0:
@@ -193,9 +363,10 @@ def install_command(
             details=_failure_details(result, command=command),
             error_code="INSTALL_FAILED",
         )
+    rust = _install_optional_rust_extension(source=source, uv_bin=command[0], mode=rust_mode)
 
     emit_success(
         resource="installer",
         action="install",
-        data=_success_data(source=source, command=command),
+        data=_success_data(source=source, command=command, rust=rust),
     )

@@ -26,6 +26,14 @@ uvx --from <repo-path-or-git-url> pcli install
 This command infers its source when possible and runs `uv tool install --from ... pcli`.
 For local development checkouts, prefer `uv tool install --from . pcli` (or use a committed/tagged git ref) so version-cached `uvx` runs do not execute stale builds.
 
+Rust acceleration:
+
+```bash
+pcli install from=<repo-path-or-git-url> rust=auto
+```
+
+`rust=auto` (default) tries to build/install the optional `pcli_rust_norm` extension when `cargo`/`rustc` are available, and falls back to Python otherwise.
+
 ## Upgrade
 
 ```bash

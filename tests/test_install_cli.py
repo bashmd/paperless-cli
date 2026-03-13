@@ -20,6 +20,11 @@ def test_install_uses_inferred_source_and_reinstall_default(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.setattr(install_cli, "_infer_source_from_direct_url", lambda: "file:///tmp/pcli")
+    monkeypatch.setattr(
+        install_cli,
+        "_install_optional_rust_extension",
+        lambda **_kwargs: {"mode": "auto", "status": "skipped", "reason": "toolchain_missing"},
+    )
 
     def fake_which(name: str) -> str | None:
         if name == "uv":
@@ -45,6 +50,7 @@ def test_install_uses_inferred_source_and_reinstall_default(
     assert payload["action"] == "install"
     assert payload["data"]["source"] == "file:///tmp/pcli"
     assert payload["data"]["bin_path"] == str(Path.home() / ".local" / "bin" / "pcli")
+    assert payload["data"]["rust"]["status"] == "skipped"
     assert "--reinstall" in called["command"]
 
 
@@ -52,6 +58,11 @@ def test_install_supports_explicit_source_and_flags(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.setattr(install_cli, "_infer_source_from_direct_url", lambda: None)
+    monkeypatch.setattr(
+        install_cli,
+        "_install_optional_rust_extension",
+        lambda **_kwargs: {"mode": "auto", "status": "skipped", "reason": "toolchain_missing"},
+    )
 
     def fake_which(name: str) -> str | None:
         if name == "uv":
@@ -94,6 +105,29 @@ def test_install_supports_explicit_source_and_flags(
     assert "--python" in command
 
 
+def test_install_supports_rust_override(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(install_cli, "_infer_source_from_direct_url", lambda: None)
+    monkeypatch.setattr("pcli.cli.install.shutil.which", lambda _name: "/usr/bin/uv")
+
+    called: dict[str, str] = {}
+
+    def fake_run(command: list[str]) -> subprocess.CompletedProcess[str]:
+        return subprocess.CompletedProcess(command, 0, stdout="", stderr="")
+
+    def fake_rust(**kwargs: str) -> dict[str, str]:
+        called["mode"] = kwargs["mode"]
+        return {"mode": kwargs["mode"], "status": "skipped", "reason": "disabled"}
+
+    monkeypatch.setattr(install_cli, "_run_install_command", fake_run)
+    monkeypatch.setattr(install_cli, "_install_optional_rust_extension", fake_rust)
+
+    result = runner.invoke(app, ["install", "from=file:///tmp/pcli", "rust=false"])
+    assert result.exit_code == 0
+    assert called["mode"] == "false"
+
+
 def test_install_requires_source_if_inference_unavailable(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -125,6 +159,16 @@ def test_install_failure_raises_pcli_error(
     assert exc.value.payload.code == "INSTALL_FAILED"
 
 
+def test_install_invalid_rust_mode_raises_usage_error() -> None:
+    with pytest.raises(UsageValidationError) as exc:
+        runner.invoke(
+            app,
+            ["install", "from=file:///tmp/pcli", "rust=maybe"],
+            catch_exceptions=False,
+        )
+    assert exc.value.payload.code == "INVALID_RUST_MODE"
+
+
 def test_uv_global_env_removes_uv_tool_overrides(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -137,3 +181,29 @@ def test_uv_global_env_removes_uv_tool_overrides(
     assert "UV_TOOL_BIN_DIR" not in env
     assert "UV_TOOL_DIR" not in env
     assert env["PCLI_TEST_KEEP"] == "1"
+
+
+def test_derive_rust_requirement_for_git_source() -> None:
+    requirement = install_cli._derive_rust_requirement("git+https://example.test/pcli.git@main")
+    assert requirement == "git+https://example.test/pcli.git@main#subdirectory=rust/pcli_rust_norm"
+
+
+def test_derive_rust_requirement_for_local_source(tmp_path: Path) -> None:
+    repo = tmp_path / "repo"
+    crate = repo / "rust" / "pcli_rust_norm"
+    crate.mkdir(parents=True)
+    requirement = install_cli._derive_rust_requirement(str(repo))
+    assert requirement == str(crate)
+
+
+def test_install_optional_rust_skips_without_toolchain(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(install_cli, "_rust_toolchain_available", lambda: False)
+    result = install_cli._install_optional_rust_extension(
+        source="file:///tmp/pcli",
+        uv_bin="/usr/bin/uv",
+        mode="auto",
+    )
+    assert result["status"] == "skipped"
+    assert result["reason"] == "toolchain_missing"
