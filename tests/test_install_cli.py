@@ -20,11 +20,6 @@ def test_install_uses_inferred_source_and_reinstall_default(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.setattr(install_cli, "_infer_source_from_direct_url", lambda: "file:///tmp/pcli")
-    monkeypatch.setattr(
-        install_cli,
-        "_run_uv_tool_dir",
-        lambda _uv_bin: subprocess.CompletedProcess([], 0, stdout="/tmp/bin\n", stderr=""),
-    )
 
     def fake_which(name: str) -> str | None:
         if name == "uv":
@@ -49,7 +44,7 @@ def test_install_uses_inferred_source_and_reinstall_default(
     assert payload["ok"] is True
     assert payload["action"] == "install"
     assert payload["data"]["source"] == "file:///tmp/pcli"
-    assert payload["data"]["bin_path"] == "/tmp/bin/pcli"
+    assert payload["data"]["bin_path"] == str(Path.home() / ".local" / "bin" / "pcli")
     assert "--reinstall" in called["command"]
 
 
@@ -57,11 +52,6 @@ def test_install_supports_explicit_source_and_flags(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.setattr(install_cli, "_infer_source_from_direct_url", lambda: None)
-    monkeypatch.setattr(
-        install_cli,
-        "_run_uv_tool_dir",
-        lambda _uv_bin: subprocess.CompletedProcess([], 0, stdout="/tmp/bin\n", stderr=""),
-    )
 
     def fake_which(name: str) -> str | None:
         if name == "uv":
@@ -119,11 +109,6 @@ def test_install_failure_raises_pcli_error(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.setattr(install_cli, "_infer_source_from_direct_url", lambda: "file:///tmp/pcli")
-    monkeypatch.setattr(
-        install_cli,
-        "_run_uv_tool_dir",
-        lambda _uv_bin: subprocess.CompletedProcess([], 0, stdout="/tmp/bin\n", stderr=""),
-    )
     monkeypatch.setattr(
         "pcli.cli.install.shutil.which",
         lambda name: "/usr/bin/uv" if name == "uv" else "/home/test/.local/bin/pcli",
