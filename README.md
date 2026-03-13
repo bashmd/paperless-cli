@@ -58,16 +58,16 @@ Credentials are stored under `${XDG_CONFIG_HOME:-~/.config}/pcli`.
 
 Prerequisite: install `uv` first (<https://docs.astral.sh/uv/>).
 
-Recommended one-liner from a repo (pinned ref, auto Rust acceleration when available):
+Recommended one-liner from this repo (explicit ref, auto Rust acceleration when available):
 
 ```bash
-uvx --from git+https://github.com/<org>/<repo>.git@<tag-or-commit> pcli install from=git+https://github.com/<org>/<repo>.git@<tag-or-commit> rust=auto
+uvx --from git+https://github.com/bashmd/paperless-cli.git@main pcli install from=git+https://github.com/bashmd/paperless-cli.git@main rust=auto
 ```
 
 Direct global install:
 
 ```bash
-uv tool install --from git+https://github.com/<org>/<repo>.git@<tag-or-commit> pcli
+uv tool install --from git+https://github.com/bashmd/paperless-cli.git@main pcli
 ```
 
 From a local checkout:
@@ -81,7 +81,7 @@ For local development with `uvx`, pin a commit/tag in `--from` to avoid stale ca
 ## Upgrade
 
 ```bash
-uv tool install --from git+https://github.com/<org>/<repo>.git@<tag-or-commit> pcli --reinstall
+uv tool install --from git+https://github.com/bashmd/paperless-cli.git@main pcli --reinstall
 ```
 
 ## Verify
