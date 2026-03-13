@@ -3,6 +3,7 @@ name = "pcli"
 version = "0.1.0"
 description = "Paperless CLI for LLM-friendly retrieval and management."
 readme = "README.md"
+license = { text = "MIT" }
 authors = [
     { name = "Phillip Engel", email = "phillip@xrealm.com" }
 ]

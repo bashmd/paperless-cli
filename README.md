@@ -166,3 +166,7 @@ pcli install from=. rust=auto
 1. Cookbook with command patterns: [docs/command_cookbook.md](docs/command_cookbook.md)
 2. Performance benchmark guide: [docs/performance_benchmarks.md](docs/performance_benchmarks.md)
 3. Retrieval/cursor ADR: [docs/adr/0001-retrieval-and-cursor-decisions.md](docs/adr/0001-retrieval-and-cursor-decisions.md)
+
+## License
+
+MIT. See [LICENSE](LICENSE).
