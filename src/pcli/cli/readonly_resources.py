@@ -99,8 +99,9 @@ def _parse_tokens_for_resource(
 def build_readonly_resource_app(spec: ReadOnlyResourceSpec) -> typer.Typer:
     """Build a Typer sub-app for read-only resources."""
     resource_app = typer.Typer(
-        help=f"{spec.cli_name} read-only resource commands.",
+        help=f"Inspect {spec.cli_name} read-only resources (list/get).",
         add_completion=False,
+        rich_markup_mode=None,
     )
 
     @resource_app.command(

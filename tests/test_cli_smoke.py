@@ -16,6 +16,7 @@ def test_help_works() -> None:
     result = runner.invoke(app, ["--help"])
     assert result.exit_code == 0
     assert "Paperless CLI" in result.output
+    assert "Quick start:" in result.output
 
 
 def test_version_works() -> None:
@@ -30,6 +31,15 @@ def test_no_args_shows_help() -> None:
     result = runner.invoke(app, [])
     assert result.exit_code == 0
     assert "Usage:" in result.output
+
+
+def test_auth_help_includes_action_forms() -> None:
+    """Auth help should explain supported invocation forms."""
+    result = runner.invoke(app, ["auth", "--help"])
+    assert result.exit_code == 0
+    assert "Action forms:" in result.output
+    assert "pcli auth <username> <password>" in result.output
+    assert "pcli auth switch <profile>" in result.output
 
 
 def test_console_script_entrypoint_wiring() -> None:

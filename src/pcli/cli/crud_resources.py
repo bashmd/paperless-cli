@@ -109,7 +109,11 @@ def _mutation_error_details(exc: Exception) -> dict[str, Any]:
 
 def build_crud_resource_app(spec: CrudResourceSpec) -> typer.Typer:
     """Build a Typer sub-app for a CRUD resource."""
-    resource_app = typer.Typer(help=f"{spec.cli_name} resource commands.", add_completion=False)
+    resource_app = typer.Typer(
+        help=f"Manage {spec.cli_name} resources (list/get/create/update/delete).",
+        add_completion=False,
+        rich_markup_mode=None,
+    )
 
     @resource_app.command(
         "list",

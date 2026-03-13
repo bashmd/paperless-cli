@@ -16,7 +16,11 @@ from pcli.core.options import GlobalOptions
 from pcli.core.parsing import parse_tokens
 from pcli.core.validation import validate_raw_allowed
 
-app = typer.Typer(help="Task endpoint operations.", add_completion=False)
+app = typer.Typer(
+    help="Task endpoint operations (list/get).",
+    add_completion=False,
+    rich_markup_mode=None,
+)
 
 _TASKS_GLOBAL_KEYS = {
     "url",

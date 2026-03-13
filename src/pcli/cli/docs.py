@@ -36,8 +36,31 @@ from pcli.core.validation import validate_raw_allowed
 from pcli.core.whitespace import normalize_whitespace as _normalize_whitespace
 from pcli.models.discovery import DEFAULT_DISCOVERY_SORT, canonicalize_document_search
 
-app = typer.Typer(help="Document discovery and management.", add_completion=False)
-notes_app = typer.Typer(help="Document note operations.", add_completion=False)
+_DOCS_HELP = "Document retrieval, discovery, and management commands."
+_DOCS_EPILOG = (
+    "\b\n"
+    "Discovery:\n"
+    "  pcli docs find query=\"invoice acme\" max_docs=100\n"
+    "  pcli docs find query=\"invoice acme\" ids_only=true format=ndjson |\n"
+    "    pcli docs peek from_stdin=true\n"
+    "  pcli docs find query=\"late fee\" ids_only=true format=ndjson |\n"
+    "    pcli docs skim from_stdin=true query=\"late fee\"\n"
+    "\n"
+    "Deep retrieval:\n"
+    "  pcli get 123"
+)
+
+app = typer.Typer(
+    help=_DOCS_HELP,
+    epilog=_DOCS_EPILOG,
+    add_completion=False,
+    rich_markup_mode=None,
+)
+notes_app = typer.Typer(
+    help="Document note operations.",
+    add_completion=False,
+    rich_markup_mode=None,
+)
 app.add_typer(notes_app, name="notes")
 
 _FIND_KNOWN_OPTION_KEYS = {

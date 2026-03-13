@@ -96,8 +96,9 @@ def _parse_tokens_for_resource(
 def build_singleton_resource_app(spec: SingletonResourceSpec) -> typer.Typer:
     """Build a Typer sub-app for singleton resources."""
     resource_app = typer.Typer(
-        help=f"{spec.cli_name} singleton resource commands.",
+        help=f"Read {spec.cli_name} singleton data (get).",
         add_completion=False,
+        rich_markup_mode=None,
     )
 
     @resource_app.command(

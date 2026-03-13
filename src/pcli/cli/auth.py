@@ -18,7 +18,40 @@ from pcli.cli.io import emit_success
 from pcli.core.errors import AuthFailureError, NetworkTimeoutError, UsageValidationError
 from pcli.core.parsing import parse_tokens
 
-app = typer.Typer(help="Authenticate and manage local auth profiles.", add_completion=False)
+_AUTH_HELP = (
+    "Authenticate to Paperless and manage reusable local auth profiles "
+    "(login/status/list/switch/logout)."
+)
+
+_AUTH_EPILOG = (
+    "\b\n"
+    "Action forms:\n"
+    "  pcli auth <username> <password> [url=... profile=...]\n"
+    "  pcli auth login <username> <password> [url=... profile=...]\n"
+    "  pcli auth status [profile=...]\n"
+    "  pcli auth list\n"
+    "  pcli auth switch <profile>\n"
+    "  pcli auth logout [profile=...]\n"
+    "\n"
+    "Examples:\n"
+    "  pcli auth alice 'secret' url=https://paperless.example.com\n"
+    "  pcli auth status\n"
+    "  pcli auth switch work\n"
+    "  pcli auth logout profile=work\n"
+    "\n"
+    "Notes:\n"
+    "  - If username is one of login/status/list/switch/logout, use explicit\n"
+    "    `auth login <username> <password>`.\n"
+    "  - Runtime precedence: CLI args > PCLI_* env vars > active profile."
+)
+
+app = typer.Typer(
+    help=_AUTH_HELP,
+    epilog=_AUTH_EPILOG,
+    add_completion=False,
+    no_args_is_help=True,
+    rich_markup_mode=None,
+)
 
 
 def _stores() -> tuple[ConfigStore, CredentialStore]:
@@ -180,7 +213,10 @@ def _action_logout(*, profile_override: str | None) -> None:
 
 @app.callback(invoke_without_command=True)
 def auth_root(
-    tokens: Annotated[list[str], typer.Argument(help="Action or credentials.")],
+    tokens: Annotated[
+        list[str],
+        typer.Argument(help="Action tokens, or shorthand: <username> <password>."),
+    ],
     url: Annotated[str | None, typer.Option("--url", help="Paperless base URL.")] = None,
     profile: Annotated[str | None, typer.Option("--profile", help="Profile name.")] = None,
 ) -> None:
