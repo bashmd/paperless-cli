@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import os
 import shlex
 import shutil
 import subprocess
@@ -126,6 +127,15 @@ def _run_install_command(command: list[str]) -> subprocess.CompletedProcess[str]
     )
 
 
+def _run_uv_tool_dir(uv_bin: str) -> subprocess.CompletedProcess[str]:
+    return subprocess.run(
+        [uv_bin, "tool", "dir", "--bin"],
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+
+
 def _shell_render(command: list[str]) -> str:
     return " ".join(shlex.quote(part) for part in command)
 
@@ -153,13 +163,21 @@ def _success_data(
     source: str,
     command: list[str],
 ) -> dict[str, Any]:
-    default_bin = Path.home() / ".local" / "bin" / "pcli"
-    current = shutil.which("pcli")
+    executable = "pcli.exe" if os.name == "nt" else "pcli"
+    default_bin = Path.home() / ".local" / "bin" / executable
+    bin_path = str(default_bin)
+    uv_bin = command[0] if command else ""
+    if uv_bin:
+        tool_dir_result = _run_uv_tool_dir(uv_bin)
+        if tool_dir_result.returncode == 0:
+            candidate_dir = (tool_dir_result.stdout or "").strip()
+            if candidate_dir:
+                bin_path = str((Path(candidate_dir).expanduser() / executable).resolve())
     return {
         "installed": True,
         "source": source,
         "command": _shell_render(command),
-        "bin_path": current or str(default_bin),
+        "bin_path": bin_path,
     }
 
 
