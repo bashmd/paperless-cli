@@ -953,12 +953,50 @@ def _update_document_sync(document: Any, *, only_changed: bool) -> bool:
     return asyncio.run(_update_document(document, only_changed=only_changed))
 
 
+async def _update_document_fields(
+    client: Any,
+    *,
+    document_id: int,
+    fields: dict[str, Any],
+    only_changed: bool,
+) -> bool:
+    document = await _fetch_document(client, document_id)
+    apply_mutation_fields(document, fields, error_code="INVALID_UPDATE_FIELDS")
+    return bool(await document.update(only_changed=only_changed))
+
+
+def _update_document_fields_sync(
+    client: Any,
+    *,
+    document_id: int,
+    fields: dict[str, Any],
+    only_changed: bool,
+) -> bool:
+    return asyncio.run(
+        _update_document_fields(
+            client,
+            document_id=document_id,
+            fields=fields,
+            only_changed=only_changed,
+        )
+    )
+
+
 async def _delete_document(document: Any) -> bool:
     return bool(await document.delete())
 
 
 def _delete_document_sync(document: Any) -> bool:
     return asyncio.run(_delete_document(document))
+
+
+async def _delete_document_by_id(client: Any, *, document_id: int) -> bool:
+    document = await _fetch_document(client, document_id)
+    return bool(await document.delete())
+
+
+def _delete_document_by_id_sync(client: Any, *, document_id: int) -> bool:
+    return asyncio.run(_delete_document_by_id(client, document_id=document_id))
 
 
 async def _fetch_binary_document(
@@ -1732,10 +1770,15 @@ def docs_update(
     global_options = GlobalOptions.from_updates(updates)
     validate_raw_allowed(raw=global_options.raw, command_path="docs update")
     client, runtime_context = create_client(global_options)
-    document = _fetch_document_sync(client, document_id)
-    apply_mutation_fields(document, fields, error_code="INVALID_UPDATE_FIELDS")
     try:
-        updated = _update_document_sync(document, only_changed=only_changed)
+        updated = _update_document_fields_sync(
+            client,
+            document_id=document_id,
+            fields=fields,
+            only_changed=only_changed,
+        )
+    except UsageValidationError:
+        raise
     except Exception as exc:  # pragma: no cover - defensive mapping
         raise PcliError(
             "Document update failed.",
@@ -1788,9 +1831,8 @@ def docs_delete(
     global_options = GlobalOptions.from_updates(updates)
     validate_raw_allowed(raw=global_options.raw, command_path="docs delete")
     client, runtime_context = create_client(global_options)
-    document = _fetch_document_sync(client, document_id)
     try:
-        deleted = _delete_document_sync(document)
+        deleted = _delete_document_by_id_sync(client, document_id=document_id)
     except Exception as exc:  # pragma: no cover - defensive mapping
         raise PcliError(
             "Document delete failed.",
