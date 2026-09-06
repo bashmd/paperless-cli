@@ -15,9 +15,9 @@ Use this when your goal is: find relevant documents fast, skim massive corpora, 
 1. Broad shortlist:
    - `pcli docs find query="<topic>" max_docs=300`
 2. Cheap preview:
-   - `pcli docs find query="<topic>" ids_only=true max_docs=300 format=ndjson | pcli docs peek from_stdin=true max_docs=80 per_doc_max_chars=500`
+   - `pcli docs find query="<topic>" ids_only=true max_docs=300 format=ndjson | pcli docs peek from_stdin=true allow_partial=true max_docs=80 per_doc_max_chars=500`
 3. Grep-like hit extraction with context:
-   - `pcli docs find query="<topic>" ids_only=true max_docs=300 format=ndjson | pcli docs skim from_stdin=true query="<needle>" context_before=120 context_after=220 max_hits_per_doc=2`
+   - `pcli docs find query="<topic>" ids_only=true max_docs=300 format=ndjson | pcli docs skim from_stdin=true allow_partial=true query="<needle>" context_before=120 context_after=220 max_hits_per_doc=2`
 4. Deep retrieval only for selected docs:
    - `pcli get <doc-id>`
 
@@ -46,6 +46,12 @@ Use these early to control cost:
 3. `skim`: header line `doc_id:page:start-end <hit>`, indented context line, optional `--`, then `# summary ...`
 
 Treat `# summary` as end-of-batch metadata (`next_cursor`, counts, budgets consumed).
+
+Check `complete` and `stop_reason`: limits do not mean exhaustion. Resume with the
+same query/fields/page size and `cursor=...` (without `page`); per-call budgets can
+change. The shortlist examples deliberately use `allow_partial=true` on consumers.
+Without that opt-in, incomplete input fails instead of silently dropping coverage.
+Failed producers always fail the consumer, even with `allow_partial=true`.
 
 ## 6. Fast Triage Heuristics
 

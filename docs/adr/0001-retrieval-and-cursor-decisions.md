@@ -1,7 +1,16 @@
 # ADR 0001: Retrieval Ranking, Snippets, and Cursor Encoding
 
-Status: accepted  
+Status: amended 2026-09-07 (the amendment below supersedes conflicting original decisions)
 Date: 2026-03-12
+
+## 2026-09-07 Amendment
+
+Preserve server ordering across batches; do not locally re-rank subsets. Custom
+sorts map to `ordering`, with unsupported full-text composite sorts rejected.
+Version 2 cursors store a document position and an intra-document hit position.
+Query/output shape remains bound; per-call budgets may change. Lookahead distinguishes
+limits from exhaustion, and every batch reports completion and stop reason.
+Explicit initial pages can produce resumable cursors. Live scans are not snapshots.
 
 ## Context
 

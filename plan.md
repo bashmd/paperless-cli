@@ -426,6 +426,30 @@ Cursor binding includes all output-shaping inputs:
 
 Response metadata includes `next_cursor` when more data is available.
 
+### Audit Amendment (2026-09-07)
+
+This amendment supersedes conflicting ranking, budget, and cursor rules above:
+
+1. Preserve server result order across batches; default full-text order is server
+   relevance. Translate custom `sort` to `ordering`, rejecting unsupported full-text
+   composite sorts rather than silently ignoring them.
+2. Cursors version 2 store the next document position and intra-document hit index.
+   An explicit initial `page` can produce a cursor; omit `page` when resuming.
+3. Query, filters, page size, and output shape remain bound. Per-call `max_docs`,
+   page/character budgets, and stop-after limits may change on resumption.
+4. Summaries in every discovery format include `complete`, `stop_reason`, and
+   `next_cursor`. Counts describe the current batch, not the total matching corpus.
+5. A limit is not exhaustion. A lookahead document distinguishes these cases;
+   this can fetch one document beyond the scan limit, plus an API-page prefix.
+6. Selected IDs preserve first-occurrence order before limiting. Missing or
+   inaccessible selected IDs advance the selector position without inventing results.
+7. Pipeline consumers reject failures, unterminated NDJSON, and incomplete input.
+   `allow_partial=true` explicitly accepts shortlists but never hides producer errors;
+   the output retains `input_complete=false` and `complete=false` for partial input.
+8. Budgets too small for the next item return `BUDGET_TOO_SMALL` with the limit name.
+9. Cursors are live positions, not snapshots; concurrent edits/reindexing can change
+   ordering. Batch buffering remains; full streaming is a separate follow-up.
+
 ## 9. Management Contract by Resource
 
 Generic pattern (where supported):

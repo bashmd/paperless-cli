@@ -110,14 +110,14 @@ Pipeline shortlist into peek:
 
 ```bash
 pcli docs find query="invoice acme" ids_only=true format=ndjson \
-  | pcli docs peek from_stdin=true max_docs=30
+  | pcli docs peek from_stdin=true allow_partial=true max_docs=30
 ```
 
 Pipeline shortlist into skim:
 
 ```bash
 pcli docs find query="late fee" ids_only=true format=ndjson \
-  | pcli docs skim from_stdin=true query="late fee" context_before=120 context_after=200
+  | pcli docs skim from_stdin=true allow_partial=true query="late fee" context_before=120 context_after=200
 ```
 
 Fetch one document:
@@ -132,6 +132,24 @@ pcli get 123
 2. `format=ndjson`: streaming `item`/`summary` records for pipelines.
 3. `format=rg`: ripgrep-style scan output (default for `docs find|peek|skim`).
 4. `format=text`: human-readable convenience mode (not contract-stable).
+
+## Discovery Completion
+
+Discovery summaries include `complete`, `stop_reason`, and `next_cursor`. A budget
+limit is not exhaustion. Resume with the same query, filters, fields, and page size
+plus `cursor=...`; per-call budgets may be changed. Cursors track document and hit
+positions and are not snapshots: edits or reindexing during a scan can change order.
+An initial `page=...` may produce a cursor, but omit `page` when resuming it.
+Old v1 cursors must be replaced by starting a new scan.
+
+Pipelines reject upstream failures, unterminated NDJSON, and incomplete producers.
+Use `allow_partial=true` on a consumer only when you intentionally want a bounded
+shortlist rather than exhaustive coverage. Its summary retains `input_complete=false`.
+An impossible budget returns `BUDGET_TOO_SMALL`, never a misleading empty success.
+
+`sort=-created` is translated to Paperless's `ordering` parameter. Full-text search
+supports a single ordering field; unsupported composites are rejected. Default
+search order is server relevance order, without per-batch local re-ranking.
 
 ## Current Retrieval Limitation
 

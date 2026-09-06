@@ -161,7 +161,7 @@ def test_docs_skim_supports_from_stdin_ids(
         input=(
             '0\n-2\n1\n{"type":"item","id":2}\n'
             '{"type":"item","id":2.2}\n{"type":"item","id":"bad","doc_id":5}\n'
-            '{"id":7}\n{"type":"error","id":99}\n{"type":"summary"}\n'
+            '{"id":7}\n{"type":"summary"}\n'
         ),
     )
     assert result.exit_code == 0
@@ -269,15 +269,15 @@ def test_docs_skim_respects_budget_controls(
         app,
         ["docs", "skim", "format=json", "query=invoice", "max_chars_total=5", "max_hits_per_doc=3"],
     )
-    assert by_chars.exit_code == 0
-    assert json.loads(by_chars.output)["data"]["items"] == []
+    assert isinstance(by_chars.exception, UsageValidationError)
+    assert by_chars.exception.payload.code == "BUDGET_TOO_SMALL"
 
     by_pages = runner.invoke(
         app,
         ["docs", "skim", "format=json", "query=invoice", "max_pages_total=1", "max_hits_per_doc=3"],
     )
-    assert by_pages.exit_code == 0
-    assert json.loads(by_pages.output)["data"]["items"] == []
+    assert isinstance(by_pages.exception, UsageValidationError)
+    assert by_pages.exception.payload.code == "BUDGET_TOO_SMALL"
 
 
 def test_docs_skim_cursor_resume_returns_remaining_items(
@@ -289,7 +289,7 @@ def test_docs_skim_cursor_resume_returns_remaining_items(
 
     def fake_collect(self: Any, client: Any, search: Any) -> list[FakeDocument]:
         _ = (self, client, search)
-        return [
+        documents = [
             FakeDocument(
                 id=1,
                 content="invoice one invoice two",
@@ -301,6 +301,8 @@ def test_docs_skim_cursor_resume_returns_remaining_items(
                 created=dt.date(2026, 1, 2),
             ),
         ]
+        offset = (search.page - 1) * search.page_size
+        return documents[offset : offset + search.max_docs]
 
     monkeypatch.setattr(docs_cli, "create_client", fake_create_client)
     monkeypatch.setattr(DocumentSearchAdapter, "collect_documents_sync", fake_collect)
@@ -378,7 +380,7 @@ def test_docs_skim_cursor_mismatch_and_page_conflict_are_rejected(
     assert conflict.value.payload.code == "CURSOR_WITH_PAGE"
 
 
-def test_docs_skim_with_explicit_page_does_not_emit_resumable_cursor(
+def test_docs_skim_with_explicit_page_emits_resumable_cursor(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     def fake_create_client(options: Any) -> tuple[object, RuntimeContext]:
@@ -401,4 +403,4 @@ def test_docs_skim_with_explicit_page_does_not_emit_resumable_cursor(
     )
     assert result.exit_code == 0
     payload = json.loads(result.output)
-    assert payload["meta"]["next_cursor"] is None
+    assert payload["meta"]["next_cursor"] is not None

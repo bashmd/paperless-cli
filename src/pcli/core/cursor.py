@@ -9,7 +9,7 @@ from typing import Any
 
 from pcli.core.errors import UsageValidationError
 
-_CURSOR_VERSION = 1
+_CURSOR_VERSION = 2
 
 
 @dataclass(slots=True, frozen=True)
@@ -19,15 +19,23 @@ class CursorState:
     command: str
     signature: dict[str, Any]
     offset: int
+    hit_offset: int = 0
 
 
-def encode_cursor(*, command: str, signature: dict[str, Any], offset: int) -> str:
+def encode_cursor(
+    *,
+    command: str,
+    signature: dict[str, Any],
+    offset: int,
+    hit_offset: int = 0,
+) -> str:
     """Encode cursor payload into an opaque URL-safe token."""
     payload = {
         "v": _CURSOR_VERSION,
         "cmd": command,
         "sig": signature,
         "offset": offset,
+        "hit_offset": hit_offset,
     }
     encoded = json.dumps(payload, separators=(",", ":"), sort_keys=True).encode("utf-8")
     return base64.urlsafe_b64encode(encoded).decode("ascii").rstrip("=")
@@ -62,11 +70,15 @@ def decode_cursor(token: str) -> CursorState:
     command = payload.get("cmd")
     signature = payload.get("sig")
     offset = payload.get("offset")
+    hit_offset = payload.get("hit_offset", 0)
     if (
         not isinstance(command, str)
         or not isinstance(signature, dict)
         or not isinstance(offset, int)
         or isinstance(offset, bool)
+        or not isinstance(hit_offset, int)
+        or isinstance(hit_offset, bool)
+        or hit_offset < 0
     ):
         raise UsageValidationError(
             "Invalid cursor token.",
@@ -80,4 +92,4 @@ def decode_cursor(token: str) -> CursorState:
             error_code="INVALID_CURSOR",
         )
 
-    return CursorState(command=command, signature=signature, offset=offset)
+    return CursorState(command=command, signature=signature, offset=offset, hit_offset=hit_offset)

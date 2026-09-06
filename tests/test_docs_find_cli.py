@@ -72,7 +72,7 @@ def test_docs_find_defaults_to_ripgrep_style_output(
     assert lines[-1].startswith("# summary ")
 
 
-def test_docs_find_returns_sorted_projected_rows(
+def test_docs_find_preserves_server_order_in_projected_rows(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     captured: dict[str, Any] = {}
@@ -126,13 +126,13 @@ def test_docs_find_returns_sorted_projected_rows(
     assert payload["meta"]["count"] == 2
 
     items = payload["data"]["items"]
-    assert [item["id"] for item in items] == [1, 2]
-    assert items[0]["created"] == "2026-01-01"
-    assert items[0]["snippet"] == "Fallback snippet content for first document."
-    assert items[1]["snippet"] == "Highlighted second"
+    assert [item["id"] for item in items] == [2, 1]
+    assert items[1]["created"] == "2026-01-01"
+    assert items[1]["snippet"] == "Fallback snippet content for first document."
+    assert items[0]["snippet"] == "Highlighted second"
 
     search = captured["search"]
-    assert search.max_docs == 2
+    assert search.max_docs == 3  # one lookahead document
     assert search.filters["document_type"] == "7"
     assert search.filters["correspondent__id"] == "2"
     assert search.sort == "-score,id"
@@ -163,7 +163,7 @@ def test_docs_find_supports_long_option_style(
     payload = json.loads(result.output)
     assert payload["meta"]["max_docs"] == 1
     assert captured["search"].query == "invoice"
-    assert captured["search"].max_docs == 1
+    assert captured["search"].max_docs == 2  # one lookahead document
 
 
 def test_docs_find_honors_explicit_sort_without_local_resort(
@@ -290,7 +290,8 @@ def test_docs_find_ids_only_mode_emits_chainable_ndjson(
     lines = [json.loads(line) for line in result.output.splitlines() if line.strip()]
     assert lines[0] == {"type": "item", "id": 22}
     assert lines[1] == {"type": "item", "id": 21}
-    assert lines[-1] == {"type": "summary", "meta": {"next_cursor": None}}
+    assert lines[-1]["type"] == "summary"
+    assert "complete" in lines[-1]["meta"]
 
 
 def test_docs_find_rejects_unexpected_positional_token() -> None:
@@ -349,15 +350,15 @@ def test_docs_find_respects_budget_controls(
         app,
         ["docs", "find", "format=json", "query=invoice", "max_chars_total=5", "fields=id,snippet"],
     )
-    assert by_chars.exit_code == 0
-    assert json.loads(by_chars.output)["data"]["items"] == []
+    assert isinstance(by_chars.exception, UsageValidationError)
+    assert by_chars.exception.payload.code == "BUDGET_TOO_SMALL"
 
     by_pages = runner.invoke(
         app,
         ["docs", "find", "format=json", "query=invoice", "max_pages_total=1"],
     )
-    assert by_pages.exit_code == 0
-    assert json.loads(by_pages.output)["data"]["items"] == []
+    assert isinstance(by_pages.exception, UsageValidationError)
+    assert by_pages.exception.payload.code == "BUDGET_TOO_SMALL"
 
 
 def test_docs_find_alias_precedence_prefers_max_docs_over_top(
@@ -394,7 +395,7 @@ def test_docs_find_alias_precedence_prefers_max_docs_over_top(
         ],
     )
     assert result.exit_code == 0
-    assert captured["search"].max_docs == 1
+    assert captured["search"].max_docs == 2  # one lookahead document
     assert "per_doc_max_chars" not in captured["search"].filters
     assert "max_hits_per_doc" not in captured["search"].filters
     assert len(json.loads(result.output)["data"]["items"]) == 1
@@ -409,11 +410,13 @@ def test_docs_find_cursor_resume_in_ndjson_mode(
 
     def fake_collect(self: Any, client: Any, search: Any) -> list[FakeDocument]:
         _ = (self, client, search)
-        return [
+        documents = [
             FakeDocument(id=1, title="One", created=dt.date(2026, 1, 1)),
             FakeDocument(id=2, title="Two", created=dt.date(2026, 1, 2)),
             FakeDocument(id=3, title="Three", created=dt.date(2026, 1, 3)),
         ]
+        offset = (search.page - 1) * search.page_size
+        return documents[offset : offset + search.max_docs]
 
     monkeypatch.setattr(docs_cli, "create_client", fake_create_client)
     monkeypatch.setattr(DocumentSearchAdapter, "collect_documents_sync", fake_collect)
@@ -453,7 +456,8 @@ def test_docs_find_cursor_resume_in_ndjson_mode(
     assert second.exit_code == 0
     lines2 = [json.loads(line) for line in second.output.splitlines() if line.strip()]
     assert lines2[0] == {"type": "item", "id": 3}
-    assert lines2[-1] == {"type": "summary", "meta": {"next_cursor": None}}
+    assert lines2[-1]["type"] == "summary"
+    assert "complete" in lines2[-1]["meta"]
 
 
 def test_docs_find_cursor_mismatch_and_page_conflict_are_rejected(
@@ -513,7 +517,7 @@ def test_docs_find_cursor_mismatch_and_page_conflict_are_rejected(
     assert conflict.value.payload.code == "CURSOR_WITH_PAGE"
 
 
-def test_docs_find_with_explicit_page_does_not_emit_resumable_cursor(
+def test_docs_find_with_explicit_page_emits_resumable_cursor(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     def fake_create_client(options: Any) -> tuple[object, RuntimeContext]:
@@ -544,4 +548,5 @@ def test_docs_find_with_explicit_page_does_not_emit_resumable_cursor(
     )
     assert result.exit_code == 0
     summary = json.loads(result.output.splitlines()[-1])
-    assert summary == {"type": "summary", "meta": {"next_cursor": None}}
+    assert summary["type"] == "summary"
+    assert "complete" in summary["meta"]

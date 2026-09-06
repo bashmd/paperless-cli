@@ -392,8 +392,8 @@ thread safety for all third-party schema extensions.
 ## 8. Audit Fixes (2026-09-07)
 
 - [x] A1: Single-loop generic mutations and structured dependency/CLI errors; local HTTP tests.
-- [ ] A2: Correct server ordering and preserve selected-ID priority before limiting.
-- [ ] A3: Document/hit-position cursors, honest completion metadata, and pipeline error propagation.
+- [x] A2: Correct server ordering and preserve selected-ID priority before limiting.
+- [x] A3: Document/hit-position cursors, honest completion metadata, and pipeline error propagation.
 - [ ] A4: Preserve literal evidence in rg output; remove duplicate OCR text, implement text output
   and an explicit character bound; reject unsupported standalone page bounds.
 - [ ] A5: Review units, run regression/static checks, update contracts, and commit completed units.

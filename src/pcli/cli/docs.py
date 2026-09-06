@@ -25,26 +25,27 @@ from pcli.adapters.resource_handler import (
     resolve_only_changed,
 )
 from pcli.cli.io import emit_success
-from pcli.core.cursor import decode_cursor, encode_cursor
+from pcli.core.cursor import decode_cursor
+from pcli.core.discovery_scan import ScanResult, scan_batch
 from pcli.core.errors import PcliError, UsageValidationError
 from pcli.core.options import FormatMode, GlobalOptions, parse_bool, parse_scalar
-from pcli.core.output import ndjson_item, ndjson_summary
+from pcli.core.output import ndjson_item, to_json
 from pcli.core.page_spec import normalize_page_selection
 from pcli.core.parsing import parse_tokens
 from pcli.core.retrieval_source import parse_retrieval_source, resolve_source_candidates
 from pcli.core.validation import validate_raw_allowed
 from pcli.core.whitespace import normalize_whitespace as _normalize_whitespace
-from pcli.models.discovery import DEFAULT_DISCOVERY_SORT, canonicalize_document_search
+from pcli.models.discovery import canonicalize_document_search
 
 _DOCS_HELP = "Document retrieval, discovery, and management commands."
 _DOCS_EPILOG = (
     "\b\n"
     "Discovery:\n"
-    "  pcli docs find query=\"invoice acme\" max_docs=100\n"
-    "  pcli docs find query=\"invoice acme\" ids_only=true format=ndjson |\n"
-    "    pcli docs peek from_stdin=true\n"
-    "  pcli docs find query=\"late fee\" ids_only=true format=ndjson |\n"
-    "    pcli docs skim from_stdin=true query=\"late fee\"\n"
+    '  pcli docs find query="invoice acme" max_docs=100\n'
+    '  pcli docs find query="invoice acme" ids_only=true format=ndjson |\n'
+    "    pcli docs peek from_stdin=true allow_partial=true\n"
+    '  pcli docs find query="late fee" ids_only=true format=ndjson |\n'
+    '    pcli docs skim from_stdin=true allow_partial=true query="late fee"\n'
     "\n"
     "Deep retrieval:\n"
     "  pcli get 123"
@@ -93,6 +94,7 @@ _SNIPPET_MAX_CHARS = 240
 _PEEK_KNOWN_OPTION_KEYS = _FIND_KNOWN_OPTION_KEYS | {
     "ids",
     "from_stdin",
+    "allow_partial",
     "per_doc_max_chars",
     "max_chars",
 }
@@ -354,6 +356,7 @@ def _rg_skim_lines(item: dict[str, Any]) -> list[str]:
         lines.append(f"    {_rg_scalar(text)}")
     return lines
 
+
 def _parse_fields(value: str | None, *, default_fields: list[str]) -> list[str]:
     if value is None:
         return list(default_fields)
@@ -532,7 +535,7 @@ def _parse_ids(value: str | None) -> list[int]:
     return ids
 
 
-def _read_stdin_ids() -> list[int]:
+def _read_stdin_ids(*, allow_partial: bool = False) -> tuple[list[int], bool]:
     def _coerce_stdin_id(value: Any) -> int | None:
         if isinstance(value, bool):
             return None
@@ -548,8 +551,10 @@ def _read_stdin_ids() -> list[int]:
 
     payload = sys.stdin.read()
     if not payload.strip():
-        return []
+        return [], True
     ids: list[int] = []
+    framed = summary_seen = False
+    complete = True
     for line in payload.splitlines():
         token = line.strip()
         if not token:
@@ -564,14 +569,39 @@ def _read_stdin_ids() -> list[int]:
             continue
         if not isinstance(obj, dict):
             continue
+        if obj.get("type") == "error" or obj.get("ok") is False:
+            raise PcliError(
+                "Upstream command failed; refusing to treat it as empty input.",
+                error_code="UPSTREAM_FAILED",
+            )
+        if obj.get("type") == "summary":
+            summary_seen = True
+            meta = obj.get("meta", {})
+            if not isinstance(meta, dict):
+                raise UsageValidationError("Invalid upstream summary.", error_code="INVALID_STDIN")
+            complete = (
+                complete and meta.get("complete", True) is not False and not meta.get("next_cursor")
+            )
+            continue
         if obj.get("type") != "item":
             continue
+        framed = True
         candidate = _coerce_stdin_id(obj.get("id"))
         if candidate is None:
             candidate = _coerce_stdin_id(obj.get("doc_id"))
         if candidate is not None:
             ids.append(candidate)
-    return ids
+    if framed and not summary_seen:
+        raise PcliError(
+            "Upstream NDJSON ended without a summary.", error_code="UPSTREAM_INCOMPLETE"
+        )
+    if not complete and not allow_partial:
+        raise UsageValidationError(
+            "Upstream scan is incomplete. Resume it, or explicitly accept a shortlist "
+            "with allow_partial=true.",
+            error_code="UPSTREAM_INCOMPLETE",
+        )
+    return ids, bool(complete)
 
 
 def _peek_source_text(document: Any) -> str:
@@ -707,25 +737,48 @@ def _resolve_cursor_offset(
     return state.offset
 
 
-def _paginate_with_cursor(
-    items: list[dict[str, Any]],
+def _emit_scan_result(
+    result: ScanResult,
     *,
-    offset: int,
-    page_size: int,
-    command: str,
-    signature: dict[str, Any],
-) -> tuple[list[dict[str, Any]], str | None]:
-    paged_items = items[offset : offset + page_size]
-    next_offset = offset + len(paged_items)
-    if next_offset < len(items):
-        return paged_items, encode_cursor(command=command, signature=signature, offset=next_offset)
-    return paged_items, None
+    action: str,
+    mode: FormatMode,
+    meta: dict[str, Any],
+    ids_only: bool = False,
+    input_complete: bool = True,
+) -> None:
+    meta = {**meta, **result.meta, "input_complete": input_complete}
+    if not input_complete:
+        meta["selection_complete"] = meta["complete"]
+        meta["complete"] = False
+        if meta["selection_complete"]:
+            meta["stop_reason"] = "upstream_incomplete"
+    if mode is FormatMode.NDJSON:
+        for row in result.items:
+            typer.echo(ndjson_item(row))
+        typer.echo(to_json({"type": "summary", "meta": meta}))
+    elif mode in (FormatMode.RG, FormatMode.TEXT):
+        for row in result.items:
+            if action == "skim":
+                for line in _rg_skim_lines(row):
+                    typer.echo(line)
+            else:
+                typer.echo(
+                    _rg_find_line(row, ids_only=ids_only)
+                    if action == "find"
+                    else _rg_peek_line(row)
+                )
+        if action == "skim" and result.items:
+            typer.echo("--")
+        typer.echo(_rg_summary_line(**meta))
+    else:
+        emit_success(resource="docs", action=action, data={"items": result.items}, meta=meta)
 
 
 def _cursor_search_signature(search: Any) -> dict[str, Any]:
     """Cursor signature payload excluding explicit page binding."""
     signature = cast(dict[str, Any], search.signature_payload())
     signature.pop("page", None)
+    signature.pop("max_docs", None)
     return signature
 
 
@@ -2225,14 +2278,10 @@ def docs_find(
         field_name="stop_after_matches",
         error_code="INVALID_STOP_AFTER_MATCHES",
     )
-    explicit_page = "page" in parsed.updates
     cursor_signature = {
         "search": _cursor_search_signature(search),
         "fields": fields,
         "ids_only": ids_only,
-        "max_pages_total": max_pages_total,
-        "max_chars_total": max_chars_total,
-        "stop_after_matches": stop_after_matches,
     }
     cursor_offset = _resolve_cursor_offset(
         parsed.updates,
@@ -2247,94 +2296,43 @@ def docs_find(
 
     client, runtime_context = create_client(global_options)
     adapter = DocumentSearchAdapter()
-    documents = adapter.collect_documents_sync(client, search)
-    sorted_documents = (
-        _sorted_find_documents(documents)
-        if search.sort == DEFAULT_DISCOVERY_SORT
-        else documents
-    )
-
-    rows: list[dict[str, Any]] = []
-    pages_used = 0
-    chars_used = 0
-    matches = 0
-    for document in sorted_documents:
-        page_cost = _document_page_cost(document)
-        if max_pages_total is not None and pages_used + page_cost > max_pages_total:
-            break
-
-        row = (
-            {"id": getattr(document, "id", None)}
+    result = scan_batch(
+        search=search,
+        fetch=lambda batch: adapter.collect_documents_sync(client, batch),
+        project=lambda doc: (
+            [{"id": getattr(doc, "id", None)}]
             if ids_only
-            else _project_find_document(document, fields)
-        )
-        row_chars = _character_cost(row)
-        if max_chars_total is not None and chars_used + row_chars > max_chars_total:
-            break
-        if stop_after_matches is not None and matches + 1 > stop_after_matches:
-            break
-
-        rows.append(row)
-        matches += 1
-        pages_used += page_cost
-        chars_used += row_chars
-
-    paged_rows, next_cursor = _paginate_with_cursor(
-        rows,
-        offset=cursor_offset,
-        page_size=search.page_size,
+            else [_project_find_document(doc, fields)]
+        ),
+        character_cost=_character_cost,
+        page_cost=_document_page_cost,
         command="docs.find",
         signature=cursor_signature,
+        offset=cursor_offset
+        if "cursor" in parsed.updates
+        else (search.page - 1) * search.page_size,
+        hit_offset=decode_cursor(parsed.updates["cursor"]).hit_offset
+        if "cursor" in parsed.updates
+        else 0,
+        max_pages=max_pages_total,
+        max_chars=max_chars_total,
+        max_matches=stop_after_matches,
     )
-    if explicit_page:
-        next_cursor = None
-
-    if global_options.format_mode is FormatMode.RG:
-        for row in paged_rows:
-            typer.echo(_rg_find_line(row, ids_only=ids_only))
-        typer.echo(
-            _rg_summary_line(
-                count=len(paged_rows),
-                total_matches=len(rows),
-                page=search.page,
-                page_size=search.page_size,
-                max_docs=search.max_docs,
-                query=search.query,
-                sort=search.sort,
-                ids_only=ids_only,
-                pages_used=pages_used,
-                chars_used=chars_used,
-                matches=matches,
-                next_cursor=next_cursor,
-                profile=runtime_context.profile,
-            )
-        )
-        return
-    if global_options.format_mode is FormatMode.NDJSON:
-        for row in paged_rows:
-            typer.echo(ndjson_item(row))
-        typer.echo(ndjson_summary(next_cursor=next_cursor))
-        return
-
-    emit_success(
-        resource="docs",
+    _emit_scan_result(
+        result,
         action="find",
-        data={"items": paged_rows},
+        mode=global_options.format_mode,
         meta={
-            "count": len(paged_rows),
-            "total_matches": len(rows),
+            "query": search.query,
+            "sort": search.sort,
             "page": search.page,
             "page_size": search.page_size,
             "max_docs": search.max_docs,
-            "query": search.query,
-            "sort": search.sort,
-            "ids_only": ids_only,
-            "pages_used": pages_used,
-            "chars_used": chars_used,
-            "matches": matches,
-            "next_cursor": next_cursor,
             "profile": runtime_context.profile,
+            "ids_only": ids_only,
+            "fields": fields,
         },
+        ids_only=ids_only,
     )
 
 
@@ -2355,7 +2353,7 @@ def docs_peek(
         raw_tokens,
         known_option_keys=_PEEK_KNOWN_OPTION_KEYS,
         passthrough_filter_mode=True,
-        boolean_option_keys={"raw", "verbose", "from_stdin"},
+        boolean_option_keys={"raw", "verbose", "from_stdin", "allow_partial"},
         strict_boolean_values=True,
     )
     if parsed.positional or parsed.passthrough_tokens:
@@ -2369,13 +2367,21 @@ def docs_peek(
     if "from_stdin" in parsed.updates:
         from_stdin = parse_bool(parsed.updates["from_stdin"])
 
+    if from_stdin and "cursor" in parsed.updates:
+        raise UsageValidationError(
+            "cursor cannot be combined with from_stdin=true.", error_code="CURSOR_WITH_STDIN"
+        )
     explicit_ids = _parse_ids(parsed.updates.get("ids"))
     if from_stdin and explicit_ids:
         raise UsageValidationError(
             "from_stdin=true cannot be combined with ids=...",
             error_code="MUTUALLY_EXCLUSIVE_SELECTORS",
         )
-    stdin_ids = _read_stdin_ids() if from_stdin else []
+    stdin_ids, input_complete = (
+        _read_stdin_ids(allow_partial=parse_bool(parsed.updates.get("allow_partial", "false")))
+        if from_stdin
+        else ([], True)
+    )
     selected_ids = explicit_ids or stdin_ids
     query = parsed.updates.get("query")
     has_query = query is not None and bool(str(query).strip())
@@ -2428,14 +2434,10 @@ def docs_peek(
         sort=parsed.updates.get("sort"),
         filters=filters,
     )
-    explicit_page = "page" in parsed.updates
     cursor_signature = {
         "search": _cursor_search_signature(search),
         "fields": fields,
         "per_doc_max_chars": per_doc_max_chars,
-        "max_pages_total": max_pages_total,
-        "max_chars_total": max_chars_total,
-        "stop_after_matches": stop_after_matches,
     }
     cursor_offset = _resolve_cursor_offset(
         parsed.updates,
@@ -2450,138 +2452,69 @@ def docs_peek(
     validate_raw_allowed(raw=global_options.raw, command_path="docs peek")
 
     if from_stdin and not selected_ids:
-        profile = global_options.profile or "default"
-        if global_options.format_mode is FormatMode.RG:
-            typer.echo(
-                _rg_summary_line(
-                    count=0,
-                    total_matches=0,
-                    max_docs=0,
-                    per_doc_max_chars=per_doc_max_chars,
-                    pages_used=0,
-                    chars_used=0,
-                    matches=0,
-                    from_stdin=True,
-                    query=search.query,
-                    next_cursor=None,
-                    profile=profile,
-                )
-            )
-            return
-        if global_options.format_mode is FormatMode.NDJSON:
-            typer.echo(ndjson_summary(next_cursor=None))
-            return
-        emit_success(
-            resource="docs",
+        _emit_scan_result(
+            ScanResult(
+                [],
+                {
+                    "count": 0,
+                    "matches": 0,
+                    "docs_scanned": 0,
+                    "docs_with_hits": 0,
+                    "pages_used": 0,
+                    "chars_used": 0,
+                    "complete": True,
+                    "stop_reason": "exhausted",
+                    "next_cursor": None,
+                },
+            ),
             action="peek",
-            data={"items": []},
+            mode=global_options.format_mode,
             meta={
-                "count": 0,
                 "max_docs": 0,
-                "per_doc_max_chars": per_doc_max_chars,
-                "pages_used": 0,
-                "chars_used": 0,
-                "matches": 0,
                 "from_stdin": True,
                 "query": search.query,
-                "next_cursor": None,
-                "profile": profile,
+                "profile": global_options.profile or "default",
             },
+            input_complete=input_complete,
         )
         return
 
     client, runtime_context = create_client(global_options)
     adapter = DocumentSearchAdapter()
-    documents = adapter.collect_documents_sync(client, search)
-
-    if selected_ids:
-        rank = {doc_id: index for index, doc_id in enumerate(selected_ids)}
-        fallback_rank = len(rank)
-
-        def _selector_rank(document: Any) -> int:
-            doc_id = getattr(document, "id", None)
-            if not isinstance(doc_id, int):
-                return fallback_rank
-            return rank.get(doc_id, fallback_rank)
-
-        documents = sorted(
-            documents,
-            key=_selector_rank,
-        )
-
-    rows: list[dict[str, Any]] = []
-    pages_used = 0
-    chars_used = 0
-    matches = 0
-    for document in documents:
-        page_cost = _document_page_cost(document)
-        if max_pages_total is not None and pages_used + page_cost > max_pages_total:
-            break
-
-        row = _project_peek_document(document, fields, max_chars=per_doc_max_chars)
-        row_chars = int(row.get("chars", 0))
-        if max_chars_total is not None and chars_used + row_chars > max_chars_total:
-            break
-        if stop_after_matches is not None and matches + 1 > stop_after_matches:
-            break
-
-        rows.append(row)
-        pages_used += page_cost
-        chars_used += row_chars
-        matches += 1
-
-    paged_rows, next_cursor = _paginate_with_cursor(
-        rows,
-        offset=cursor_offset,
-        page_size=search.page_size,
+    result = scan_batch(
+        search=search,
+        fetch=lambda batch: adapter.collect_documents_sync(client, batch),
+        project=lambda doc: [_project_peek_document(doc, fields, max_chars=per_doc_max_chars)],
+        character_cost=lambda row: int(row["chars"]),
+        page_cost=_document_page_cost,
         command="docs.peek",
         signature=cursor_signature,
+        offset=cursor_offset
+        if "cursor" in parsed.updates
+        else (search.page - 1) * search.page_size,
+        hit_offset=decode_cursor(parsed.updates["cursor"]).hit_offset
+        if "cursor" in parsed.updates
+        else 0,
+        selected_ids=selected_ids or None,
+        max_pages=max_pages_total,
+        max_chars=max_chars_total,
+        max_matches=stop_after_matches,
     )
-    if explicit_page:
-        next_cursor = None
-
-    if global_options.format_mode is FormatMode.RG:
-        for row in paged_rows:
-            typer.echo(_rg_peek_line(row))
-        typer.echo(
-            _rg_summary_line(
-                count=len(paged_rows),
-                total_matches=len(rows),
-                max_docs=search.max_docs,
-                per_doc_max_chars=per_doc_max_chars,
-                pages_used=pages_used,
-                chars_used=chars_used,
-                matches=matches,
-                from_stdin=from_stdin,
-                query=search.query,
-                next_cursor=next_cursor,
-                profile=runtime_context.profile,
-            )
-        )
-        return
-    if global_options.format_mode is FormatMode.NDJSON:
-        for row in paged_rows:
-            typer.echo(ndjson_item(row))
-        typer.echo(ndjson_summary(next_cursor=next_cursor))
-        return
-
-    emit_success(
-        resource="docs",
+    _emit_scan_result(
+        result,
         action="peek",
-        data={"items": paged_rows},
+        mode=global_options.format_mode,
         meta={
-            "count": len(paged_rows),
-            "total_matches": len(rows),
-            "max_docs": search.max_docs,
-            "per_doc_max_chars": per_doc_max_chars,
-            "pages_used": pages_used,
-            "chars_used": chars_used,
-            "matches": matches,
-            "from_stdin": from_stdin,
             "query": search.query,
-            "next_cursor": next_cursor,
+            "sort": search.sort,
+            "page": search.page,
+            "page_size": search.page_size,
+            "max_docs": search.max_docs,
             "profile": runtime_context.profile,
+            "per_doc_max_chars": per_doc_max_chars,
+            "from_stdin": from_stdin,
         },
+        input_complete=input_complete,
     )
 
 
@@ -2602,7 +2535,7 @@ def docs_skim(
         raw_tokens,
         known_option_keys=_SKIM_KNOWN_OPTION_KEYS,
         passthrough_filter_mode=True,
-        boolean_option_keys={"raw", "verbose", "from_stdin"},
+        boolean_option_keys={"raw", "verbose", "from_stdin", "allow_partial"},
         strict_boolean_values=True,
     )
     if parsed.positional or parsed.passthrough_tokens:
@@ -2622,13 +2555,21 @@ def docs_skim(
     from_stdin = False
     if "from_stdin" in parsed.updates:
         from_stdin = parse_bool(parsed.updates["from_stdin"])
+    if from_stdin and "cursor" in parsed.updates:
+        raise UsageValidationError(
+            "cursor cannot be combined with from_stdin=true.", error_code="CURSOR_WITH_STDIN"
+        )
     explicit_ids = _parse_ids(parsed.updates.get("ids"))
     if from_stdin and explicit_ids:
         raise UsageValidationError(
             "from_stdin=true cannot be combined with ids=...",
             error_code="MUTUALLY_EXCLUSIVE_SELECTORS",
         )
-    stdin_ids = _read_stdin_ids() if from_stdin else []
+    stdin_ids, input_complete = (
+        _read_stdin_ids(allow_partial=parse_bool(parsed.updates.get("allow_partial", "false")))
+        if from_stdin
+        else ([], True)
+    )
     selected_ids = explicit_ids or stdin_ids
 
     context_before = _parse_non_negative_int(
@@ -2684,15 +2625,11 @@ def docs_skim(
         sort=parsed.updates.get("sort"),
         filters=filters,
     )
-    explicit_page = "page" in parsed.updates
     cursor_signature = {
         "search": _cursor_search_signature(search),
         "context_before": context_before,
         "context_after": context_after,
         "max_hits_per_doc": max_hits_per_doc,
-        "max_pages_total": max_pages_total,
-        "max_chars_total": max_chars_total,
-        "stop_after_matches": stop_after_matches,
     }
     cursor_offset = _resolve_cursor_offset(
         parsed.updates,
@@ -2707,161 +2644,79 @@ def docs_skim(
     validate_raw_allowed(raw=global_options.raw, command_path="docs skim")
 
     if from_stdin and not selected_ids:
-        profile = global_options.profile or "default"
-        if global_options.format_mode is FormatMode.RG:
-            typer.echo(
-                _rg_summary_line(
-                    count=0,
-                    total_matches=0,
-                    docs_scanned=0,
-                    docs_with_hits=0,
-                    max_docs=search.max_docs,
-                    max_hits_per_doc=max_hits_per_doc,
-                    context_before=context_before,
-                    context_after=context_after,
-                    pages_used=0,
-                    chars_used=0,
-                    matches=0,
-                    query=search.query,
-                    from_stdin=True,
-                    next_cursor=None,
-                    profile=profile,
-                )
-            )
-            return
-        if global_options.format_mode is FormatMode.NDJSON:
-            typer.echo(ndjson_summary(next_cursor=None))
-            return
-        emit_success(
-            resource="docs",
+        _emit_scan_result(
+            ScanResult(
+                [],
+                {
+                    "count": 0,
+                    "matches": 0,
+                    "docs_scanned": 0,
+                    "docs_with_hits": 0,
+                    "pages_used": 0,
+                    "chars_used": 0,
+                    "complete": True,
+                    "stop_reason": "exhausted",
+                    "next_cursor": None,
+                },
+            ),
             action="skim",
-            data={"items": []},
+            mode=global_options.format_mode,
             meta={
-                "count": 0,
-                "docs_scanned": 0,
-                "docs_with_hits": 0,
-                "max_docs": search.max_docs,
-                "max_hits_per_doc": max_hits_per_doc,
-                "context_before": context_before,
-                "context_after": context_after,
-                "pages_used": 0,
-                "chars_used": 0,
-                "matches": 0,
-                "query": search.query,
+                "max_docs": 0,
                 "from_stdin": True,
-                "next_cursor": None,
-                "profile": profile,
+                "query": search.query,
+                "profile": global_options.profile or "default",
             },
+            input_complete=input_complete,
         )
         return
 
     client, runtime_context = create_client(global_options)
     adapter = DocumentSearchAdapter()
-    documents = adapter.collect_documents_sync(client, search)
-
-    normalized_query = search.query or ""
-    query_pattern = re.compile(re.escape(normalized_query), re.IGNORECASE)
-    items: list[dict[str, Any]] = []
-    docs_with_hits = 0
-    docs_scanned = 0
-    pages_used = 0
-    chars_used = 0
-    stop_scan = False
-    for document in documents:
-        page_cost = _document_page_cost(document)
-        if max_pages_total is not None and pages_used + page_cost > max_pages_total:
-            break
-        pages_used += page_cost
-        docs_scanned += 1
-
-        doc_hits = _extract_skim_hits(
-            document,
-            query=normalized_query,
-            query_pattern=query_pattern,
+    pattern = re.compile(re.escape(search.query or ""), re.IGNORECASE)
+    result = scan_batch(
+        search=search,
+        fetch=lambda batch: adapter.collect_documents_sync(client, batch),
+        project=lambda doc: _extract_skim_hits(
+            doc,
+            query=search.query or "",
+            query_pattern=pattern,
             context_before=context_before,
             context_after=context_after,
             max_hits_per_doc=max_hits_per_doc,
-        )
-        emitted_for_doc = 0
-        for hit in doc_hits:
-            hit_chars = len(str(hit.get("text", "")))
-            if max_chars_total is not None and chars_used + hit_chars > max_chars_total:
-                stop_scan = True
-                break
-            if stop_after_matches is not None and len(items) + 1 > stop_after_matches:
-                stop_scan = True
-                break
-            items.append(hit)
-            chars_used += hit_chars
-            emitted_for_doc += 1
-        if emitted_for_doc > 0:
-            docs_with_hits += 1
-        if stop_scan:
-            break
-
-    paged_items, next_cursor = _paginate_with_cursor(
-        items,
-        offset=cursor_offset,
-        page_size=search.page_size,
+        ),
+        character_cost=lambda row: len(row["text"]),
+        page_cost=_document_page_cost,
         command="docs.skim",
         signature=cursor_signature,
+        offset=cursor_offset
+        if "cursor" in parsed.updates
+        else (search.page - 1) * search.page_size,
+        hit_offset=decode_cursor(parsed.updates["cursor"]).hit_offset
+        if "cursor" in parsed.updates
+        else 0,
+        selected_ids=selected_ids or None,
+        max_pages=max_pages_total,
+        max_chars=max_chars_total,
+        max_matches=stop_after_matches,
     )
-    if explicit_page:
-        next_cursor = None
-
-    if global_options.format_mode is FormatMode.RG:
-        for item in paged_items:
-            for line in _rg_skim_lines(item):
-                typer.echo(line)
-        if paged_items:
-            typer.echo("--")
-        typer.echo(
-            _rg_summary_line(
-                count=len(paged_items),
-                total_matches=len(items),
-                docs_scanned=docs_scanned,
-                docs_with_hits=docs_with_hits,
-                max_docs=search.max_docs,
-                max_hits_per_doc=max_hits_per_doc,
-                context_before=context_before,
-                context_after=context_after,
-                pages_used=pages_used,
-                chars_used=chars_used,
-                matches=len(items),
-                query=search.query,
-                from_stdin=from_stdin,
-                next_cursor=next_cursor,
-                profile=runtime_context.profile,
-            )
-        )
-        return
-    if global_options.format_mode is FormatMode.NDJSON:
-        for item in paged_items:
-            typer.echo(ndjson_item(item))
-        typer.echo(ndjson_summary(next_cursor=next_cursor))
-        return
-
-    emit_success(
-        resource="docs",
+    _emit_scan_result(
+        result,
         action="skim",
-        data={"items": paged_items},
+        mode=global_options.format_mode,
         meta={
-            "count": len(paged_items),
-            "total_matches": len(items),
-            "docs_scanned": docs_scanned,
-            "docs_with_hits": docs_with_hits,
+            "query": search.query,
+            "sort": search.sort,
+            "page": search.page,
+            "page_size": search.page_size,
             "max_docs": search.max_docs,
+            "profile": runtime_context.profile,
             "max_hits_per_doc": max_hits_per_doc,
             "context_before": context_before,
             "context_after": context_after,
-            "pages_used": pages_used,
-            "chars_used": chars_used,
-            "matches": len(items),
-            "query": search.query,
             "from_stdin": from_stdin,
-            "next_cursor": next_cursor,
-            "profile": runtime_context.profile,
         },
+        input_complete=input_complete,
     )
 
 
@@ -2938,9 +2793,7 @@ def docs_facets(
             "scanned_docs": len(documents),
             "profile": runtime_context.profile,
             "max_docs": (
-                None
-                if facet_scope == "all" and not has_explicit_doc_limit
-                else search.max_docs
+                None if facet_scope == "all" and not has_explicit_doc_limit else search.max_docs
             ),
         },
     )

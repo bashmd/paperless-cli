@@ -138,7 +138,6 @@ def test_docs_peek_supports_from_stdin_ids(
             '{"type":"item","id":2.5}',
             '{"type":"item","id":"003"}',
             '{"type":"item","id":"bad","doc_id":5}',
-            '{"type":"error","error":{"code":"X"}}',
             '{"type":"meta","id":42}',
             '{"type":"summary","meta":{"next_cursor":null}}',
             '{"type":"item","doc_id":3}',
@@ -152,7 +151,7 @@ def test_docs_peek_supports_from_stdin_ids(
         input=stdin_payload,
     )
     assert result.exit_code == 0
-    assert captured["search"].filters["id__in"] == "1,2,3,5,3"
+    assert captured["search"].filters["id__in"] == "1,2,3,5"
     payload = json.loads(result.output)
     assert payload["meta"]["from_stdin"] is True
 
@@ -306,15 +305,15 @@ def test_docs_peek_respects_budget_controls(
         app,
         ["docs", "peek", "format=json", "query=invoice", "max_chars_total=5", "fields=id,excerpt"],
     )
-    assert by_chars.exit_code == 0
-    assert json.loads(by_chars.output)["data"]["items"] == []
+    assert isinstance(by_chars.exception, UsageValidationError)
+    assert by_chars.exception.payload.code == "BUDGET_TOO_SMALL"
 
     by_pages = runner.invoke(
         app,
         ["docs", "peek", "format=json", "query=invoice", "max_pages_total=1", "fields=id,excerpt"],
     )
-    assert by_pages.exit_code == 0
-    assert json.loads(by_pages.output)["data"]["items"] == []
+    assert isinstance(by_pages.exception, UsageValidationError)
+    assert by_pages.exception.payload.code == "BUDGET_TOO_SMALL"
 
 
 def test_docs_peek_alias_precedence_prefers_per_doc_max_chars(
@@ -358,7 +357,7 @@ def test_docs_peek_cursor_resume_returns_remaining_items(
 
     def fake_collect(self: Any, client: Any, search: Any) -> list[FakeDocument]:
         _ = (self, client, search)
-        return [
+        documents = [
             FakeDocument(
                 id=1,
                 title="Doc 1",
@@ -378,6 +377,8 @@ def test_docs_peek_cursor_resume_returns_remaining_items(
                 content="preview three",
             ),
         ]
+        offset = (search.page - 1) * search.page_size
+        return documents[offset : offset + search.max_docs]
 
     monkeypatch.setattr(docs_cli, "create_client", fake_create_client)
     monkeypatch.setattr(DocumentSearchAdapter, "collect_documents_sync", fake_collect)
@@ -466,7 +467,7 @@ def test_docs_peek_cursor_mismatch_and_page_conflict_are_rejected(
     assert conflict.value.payload.code == "CURSOR_WITH_PAGE"
 
 
-def test_docs_peek_with_explicit_page_does_not_emit_resumable_cursor(
+def test_docs_peek_with_explicit_page_emits_resumable_cursor(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     def fake_create_client(options: Any) -> tuple[object, RuntimeContext]:
@@ -502,4 +503,4 @@ def test_docs_peek_with_explicit_page_does_not_emit_resumable_cursor(
     )
     assert result.exit_code == 0
     payload = json.loads(result.output)
-    assert payload["meta"]["next_cursor"] is None
+    assert payload["meta"]["next_cursor"] is not None

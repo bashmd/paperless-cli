@@ -29,6 +29,11 @@ def local_api() -> Iterator[tuple[str, list[str]]]:
             self.wfile.write(data)
 
         def do_GET(self) -> None:
+            if self.path.startswith("/api/tags/"):
+                status = self.path.rstrip("/").split("/")[-1]
+                if status in {"401", "403", "404", "500"}:
+                    self.respond({"detail": "Fixture failure"}, int(status))
+                    return
             self.respond({"id": 1, "name": "Before"} if "/tags/1/" in self.path else {})
 
         def do_PATCH(self) -> None:
@@ -49,12 +54,13 @@ def local_api() -> Iterator[tuple[str, list[str]]]:
         thread.join()
 
 
-def run_cli(*args: str) -> subprocess.CompletedProcess[str]:
+def run_cli(*args: str, input: str | None = None) -> subprocess.CompletedProcess[str]:
     return subprocess.run(
         [sys.executable, "-c", "from pcli.cli.main import main; main()", *args],
         capture_output=True,
         text=True,
         timeout=15,
+        input=input,
     )
 
 
@@ -85,3 +91,21 @@ def test_click_usage_failure_is_structured() -> None:
     assert result.returncode == 2
     assert json.loads(result.stdout)["error"]["code"] == "INVALID_ARGUMENTS"
     assert result.stderr == ""
+
+
+@pytest.mark.parametrize(("status", "exit_code"), [(401, 3), (403, 5), (404, 4), (500, 6)])
+def test_http_failures_have_stable_exit_codes(
+    local_api: tuple[str, list[str]],
+    status: int,
+    exit_code: int,
+) -> None:
+    result = run_cli("tags", "get", str(status), f"url={local_api[0]}", "token=test")
+    assert result.returncode == exit_code, result.stdout + result.stderr
+    assert json.loads(result.stdout)["ok"] is False
+    assert result.stderr == ""
+
+
+def test_failed_producer_exits_nonzero_without_pipefail() -> None:
+    result = run_cli("docs", "peek", "from_stdin=true", input='{"ok":false,"error":{}}\n')
+    assert result.returncode == 6
+    assert json.loads(result.stdout)["error"]["code"] == "UPSTREAM_FAILED"

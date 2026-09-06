@@ -25,9 +25,9 @@ _MAIN_EPILOG = (
     "\b\n"
     "Quick start:\n"
     "  pcli auth <username> <password> url=https://paperless.example.com\n"
-    "  pcli docs find query=\"invoice acme\" max_docs=50\n"
-    "  pcli docs find query=\"invoice acme\" ids_only=true format=ndjson |\n"
-    "    pcli docs peek from_stdin=true\n"
+    '  pcli docs find query="invoice acme" max_docs=50\n'
+    '  pcli docs find query="invoice acme" ids_only=true format=ndjson |\n'
+    "    pcli docs peek from_stdin=true allow_partial=true\n"
     "\n"
     "Run `pcli auth --help` and `pcli docs --help` for detailed command usage."
 )

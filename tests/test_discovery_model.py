@@ -65,7 +65,8 @@ def test_to_reduce_params_contains_canonical_values() -> None:
     assert params["custom_field_query"] == "field=value"
     assert params["page"] == 2
     assert params["page_size"] == 50
-    assert params["sort"] == DEFAULT_DISCOVERY_SORT
+    assert "sort" not in params
+    assert "ordering" not in params
     assert params["correspondent__id"] == 3
 
 

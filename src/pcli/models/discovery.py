@@ -131,8 +131,12 @@ class CanonicalDocumentSearch:
         params: dict[str, FilterValue] = {
             "page": self.page,
             "page_size": self.page_size,
-            "sort": self.sort,
         }
+        if self.sort == DEFAULT_DISCOVERY_SORT:
+            if self.query is None:
+                params["ordering"] = "id"
+        else:
+            params["ordering"] = self.sort
         if self.query is not None:
             params["query"] = self.query
         if self.custom_field_query is not None:
@@ -175,6 +179,27 @@ def canonicalize_document_search(
         default=DEFAULT_MAX_DOCS,
     )
     normalized_sort = _normalize_text(sort) or DEFAULT_DISCOVERY_SORT
+    if _normalize_text(query) and normalized_sort != DEFAULT_DISCOVERY_SORT:
+        # Paperless's full-text backend accepts one ordering field, not a CSV sort.
+        fields = {
+            "created",
+            "modified",
+            "added",
+            "title",
+            "correspondent__name",
+            "document_type__name",
+            "archive_serial_number",
+            "num_notes",
+            "owner",
+            "page_count",
+        }
+        if normalized_sort.lstrip("-") not in fields and not normalized_sort.lstrip("-").startswith(
+            "custom_field_"
+        ):
+            raise UsageValidationError(
+                "Full-text search requires a supported single sort field (for example -created).",
+                error_code="INVALID_SEARCH_SORT",
+            )
 
     return CanonicalDocumentSearch(
         query=_normalize_text(query),

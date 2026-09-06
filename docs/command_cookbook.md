@@ -28,14 +28,14 @@ Chain into `peek` from stdin:
 
 ```bash
 pcli docs find query="invoice acme" ids_only=true format=ndjson \
-  | pcli docs peek from_stdin=true fields=id,title,excerpt max_docs=50
+  | pcli docs peek from_stdin=true allow_partial=true fields=id,title,excerpt max_docs=50
 ```
 
 Chain into `skim` for context-rich matches:
 
 ```bash
 pcli docs find query="late fee" ids_only=true format=ndjson \
-  | pcli docs skim from_stdin=true query="late fee" context_before=160 context_after=240
+  | pcli docs skim from_stdin=true allow_partial=true query="late fee" context_before=160 context_after=240
 ```
 
 Resume paged discovery with cursors:
