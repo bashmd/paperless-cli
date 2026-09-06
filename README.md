@@ -126,12 +126,21 @@ Fetch one document:
 pcli get 123
 ```
 
+Read bounded OCR chunks without JSON:
+
+```bash
+pcli get 123 format=text max_chars=5000
+pcli get 123 format=text start_char=5000 max_chars=5000
+```
+
 ## Output Modes
 
 1. `format=json`: stable envelope output for machine consumers.
-2. `format=ndjson`: streaming `item`/`summary` records for pipelines.
+2. `format=ndjson`: `item`/`summary` records for discovery pipelines (currently batch-buffered).
 3. `format=rg`: ripgrep-style scan output (default for `docs find|peek|skim`).
-4. `format=text`: human-readable convenience mode (not contract-stable).
+4. `format=text`: literal OCR text on `get`; rg-style output on discovery commands.
+
+Other command groups currently emit JSON.
 
 ## Discovery Completion
 
@@ -153,7 +162,15 @@ search order is server relevance order, without per-batch local re-ranking.
 
 ## Current Retrieval Limitation
 
-`docs get` currently returns OCR-backed text (`source=ocr`) for deep retrieval.
+`docs get` returns OCR-backed text (`source=ocr`) once, without duplicating it in
+document metadata. The default `max_chars=20000` bounds returned OCR text; choose a
+larger positive value explicitly when needed. `start_char` is a zero-based Unicode
+character offset in the original OCR text, not a byte offset or a normalized skim
+offset. JSON reports `chars_total`, `start_char`, `end_char`, `next_start`, and
+`truncated`; text mode puts only OCR text on stdout and a truncation/resume notice
+on stderr. These bounds do not reduce the document response fetched from the API.
+
+`max_pages` alone now fails explicitly rather than returning unlimited text.
 Page-targeted extraction from archive/original files is not implemented yet; page/source combinations that require file extraction return explicit validation errors.
 
 ## Optional Rust Acceleration

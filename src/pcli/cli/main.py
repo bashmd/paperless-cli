@@ -75,7 +75,9 @@ def get_alias(
     ],
     tokens: Annotated[
         list[str] | None,
-        typer.Argument(help="Options passed to docs get."),
+        typer.Argument(
+            help="max_chars=20000 start_char=0 format=json|text (OCR character offsets)."
+        ),
     ] = None,
 ) -> None:
     """Alias for `pcli docs get`."""

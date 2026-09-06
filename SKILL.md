@@ -19,7 +19,12 @@ Use this when your goal is: find relevant documents fast, skim massive corpora, 
 3. Grep-like hit extraction with context:
    - `pcli docs find query="<topic>" ids_only=true max_docs=300 format=ndjson | pcli docs skim from_stdin=true allow_partial=true query="<needle>" context_before=120 context_after=220 max_hits_per_doc=2`
 4. Deep retrieval only for selected docs:
-   - `pcli get <doc-id>`
+   - `pcli get <doc-id> format=text max_chars=5000`
+
+For the next raw OCR chunk, use `start_char=5000 max_chars=5000`. JSON mode gives
+`next_start` explicitly; text mode warns on stderr when more text remains. The
+default bound is 20,000 OCR characters. Do not use skim's normalized hit offsets as
+raw `get` offsets. True page extraction is not available yet.
 
 ## 3. Efficient Knobs
 

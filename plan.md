@@ -449,6 +449,13 @@ This amendment supersedes conflicting ranking, budget, and cursor rules above:
 8. Budgets too small for the next item return `BUDGET_TOO_SMALL` with the limit name.
 9. Cursors are live positions, not snapshots; concurrent edits/reindexing can change
    ordering. Batch buffering remains; full streaming is a separate follow-up.
+10. `get` defaults to `max_chars=20000`, accepts a zero-based raw OCR `start_char`,
+    and exposes `next_start` for subsequent chunks. Metadata excludes duplicate
+    `content`; `data.text` is the only OCR payload. `format=text` emits literal text
+    on stdout, with truncation information on stderr. JSON retains structured bounds.
+11. Standalone `max_pages` fails explicitly until page extraction exists. Character
+    limits bound returned text, not API download size. Raw OCR offsets differ from
+    normalized skim offsets; neither cursor nor chunk retrieval is a snapshot.
 
 ## 9. Management Contract by Resource
 

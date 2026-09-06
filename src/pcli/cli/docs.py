@@ -182,6 +182,8 @@ _CREATE_KNOWN_OPTION_KEYS = _METADATA_KNOWN_OPTION_KEYS | {"document", "filename
 _UPDATE_KNOWN_OPTION_KEYS = _METADATA_KNOWN_OPTION_KEYS | {"only_changed"}
 _DELETE_KNOWN_OPTION_KEYS = _METADATA_KNOWN_OPTION_KEYS | {"yes"}
 _GET_KNOWN_OPTION_KEYS = {
+    "max_chars",
+    "start_char",
     "pages",
     "max_pages",
     "source",
@@ -202,11 +204,11 @@ _FACET_FIELD_MAP = {
     "correspondent": "correspondent",
     "year": "year",
 }
-_RG_HIGHLIGHT_RE = re.compile(r"<[^>]+>")
+_SEARCH_HIGHLIGHT_RE = re.compile(r"</?span\b[^>]*>", re.IGNORECASE)
 
 
 def _rg_clean_text(value: str) -> str:
-    return _normalize_whitespace(_RG_HIGHLIGHT_RE.sub("", value))
+    return _normalize_whitespace(value)
 
 
 def _rg_scalar(value: Any) -> str:
@@ -464,7 +466,7 @@ def _synthesize_snippet(document: Any) -> str | None:
         ]
     for highlight in highlights:
         if isinstance(highlight, str) and highlight.strip():
-            normalized = _normalize_whitespace(highlight)
+            normalized = _normalize_whitespace(_SEARCH_HIGHLIGHT_RE.sub("", highlight))
             if len(normalized) <= _SNIPPET_MAX_CHARS:
                 return normalized
             return normalized[: _SNIPPET_MAX_CHARS - 3].rstrip() + "..."
@@ -620,7 +622,7 @@ def _peek_source_text(document: Any) -> str:
         ]
     for highlight in highlights:
         if isinstance(highlight, str):
-            normalized = _normalize_whitespace(highlight)
+            normalized = _normalize_whitespace(_SEARCH_HIGHLIGHT_RE.sub("", highlight))
             if normalized:
                 return normalized
     return ""
@@ -1916,7 +1918,7 @@ def docs_get(
         typer.Argument(help="Global options."),
     ] = None,
 ) -> None:
-    """Fetch one document with default OCR text retrieval."""
+    """Read OCR text: max_chars=20000 start_char=0 format=json|text."""
     raw_tokens = [*(tokens or []), *ctx.args]
     parsed = parse_tokens(
         raw_tokens,
@@ -1940,6 +1942,24 @@ def docs_get(
         pages=parsed.updates.get("pages"),
         max_pages=parsed.updates.get("max_pages"),
     )
+    if "max_pages" in parsed.updates and "pages" not in parsed.updates:
+        raise UsageValidationError(
+            "OCR text has no reliable page boundaries; use max_chars to bound retrieval. "
+            "File-based page extraction is not implemented yet.",
+            error_code="PAGE_EXTRACTION_UNAVAILABLE",
+        )
+    max_chars = _parse_positive_int(
+        value=parsed.updates.get("max_chars"),
+        default=20_000,
+        field_name="max_chars",
+        error_code="INVALID_MAX_CHARS",
+    )
+    start_char = _parse_non_negative_int(
+        value=parsed.updates.get("start_char"),
+        default=0,
+        field_name="start_char",
+        error_code="INVALID_START_CHAR",
+    )
     requested_source = parse_retrieval_source(parsed.updates.get("source"))
     if selected_pages is not None and requested_source == "ocr":
         raise UsageValidationError(
@@ -1950,6 +1970,11 @@ def docs_get(
 
     global_options = GlobalOptions.from_updates(parsed.updates)
     validate_raw_allowed(raw=global_options.raw, command_path="docs get")
+    if global_options.format_mode not in (FormatMode.JSON, FormatMode.TEXT):
+        raise UsageValidationError(
+            "docs get supports format=json or format=text.",
+            error_code="UNSUPPORTED_FORMAT",
+        )
     client, runtime_context = create_client(global_options)
     document = _fetch_document_sync(client, document_id)
 
@@ -1991,21 +2016,45 @@ def docs_get(
     text = getattr(document, "content", None)
     content_text = text if isinstance(text, str) else ""
     page_count = getattr(document, "page_count", None)
+    if start_char > len(content_text):
+        raise UsageValidationError(
+            "start_char is beyond the end of the OCR text.",
+            details={"chars_total": len(content_text)},
+            error_code="INVALID_START_CHAR",
+        )
+    end_char = min(start_char + max_chars, len(content_text))
+    truncated = end_char < len(content_text)
+    excerpt = content_text[start_char:end_char]
+    if global_options.format_mode is FormatMode.TEXT:
+        typer.echo(excerpt, nl=False)
+        if truncated:
+            typer.echo(
+                f"# truncated: resume with pcli get {document_id} start_char={end_char} "
+                f"max_chars={max_chars} format=text (same profile/url)",
+                err=True,
+            )
+        return
+    metadata = _serialize_document(document)
+    metadata.pop("content", None)
 
     emit_success(
         resource="docs",
         action="get",
         data={
-            "document": _serialize_document(document),
-            "text": content_text,
+            "document": metadata,
+            "text": excerpt,
             "pages": selected_pages,
             "source": resolved_source,
-            "truncated": False,
+            "truncated": truncated,
         },
         meta={
             "id": document_id,
             "page_count": page_count if isinstance(page_count, int) else None,
             "profile": runtime_context.profile,
+            "chars_total": len(content_text),
+            "start_char": start_char,
+            "end_char": end_char,
+            "next_start": end_char if truncated else None,
         },
     )
 

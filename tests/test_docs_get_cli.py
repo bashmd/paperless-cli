@@ -62,7 +62,6 @@ def test_docs_get_returns_default_payload(monkeypatch: pytest.MonkeyPatch) -> No
         "document": {
             "id": 42,
             "title": "Invoice 42",
-            "content": "line item total 120.00",
             "page_count": 3,
         },
         "text": "line item total 120.00",
@@ -72,6 +71,46 @@ def test_docs_get_returns_default_payload(monkeypatch: pytest.MonkeyPatch) -> No
     }
     assert payload["meta"]["id"] == 42
     assert payload["meta"]["page_count"] == 3
+
+
+def test_get_chunks_are_bounded_nonduplicated_and_lossless(monkeypatch: pytest.MonkeyPatch) -> None:
+    text = "Value < 5 and > 2\n" + "\u00fc\t" * 11_000
+    document = FakeDocument(
+        id=1, title="Fixture", content=text, page_count=20, _data={"id": 1, "content": text}
+    )
+    monkeypatch.setattr(
+        docs_cli,
+        "create_client",
+        lambda options: (object(), RuntimeContext(profile="test", url="unused", token="unused")),
+    )
+    monkeypatch.setattr(docs_cli, "_fetch_document_sync", lambda client, document_id: document)
+    first = runner.invoke(app, ["get", "1"])
+    payload = json.loads(first.stdout)
+    assert len(payload["data"]["text"]) == 20_000
+    assert "content" not in payload["data"]["document"]
+    assert payload["data"]["truncated"] is True
+    assert payload["meta"]["chars_total"] == len(text)
+    second = runner.invoke(app, ["get", "1", f"start_char={payload['meta']['next_start']}"])
+    tail = json.loads(second.stdout)
+    assert payload["data"]["text"] + tail["data"]["text"] == text
+    assert tail["meta"]["next_start"] is None
+    assert tail["data"]["truncated"] is False
+    assert document._data["content"] == text
+
+    plain = runner.invoke(app, ["get", "1", "max_chars=8", "format=text"])
+    assert plain.stdout == text[:8]
+    assert "start_char=8" in plain.stderr
+    full = runner.invoke(app, ["get", "1", f"max_chars={len(text)}", "format=text"])
+    assert full.stdout == text
+    assert full.stderr == ""
+
+
+@pytest.mark.parametrize(
+    "option", ["max_pages=1", "max_chars=0", "start_char=-1", "format=ndjson", "format=rg"]
+)
+def test_get_rejects_unhonorable_bounds_or_formats(option: str) -> None:
+    with pytest.raises(UsageValidationError):
+        runner.invoke(app, ["get", "1", option], catch_exceptions=False)
 
 
 def test_root_get_alias_matches_docs_get(monkeypatch: pytest.MonkeyPatch) -> None:
