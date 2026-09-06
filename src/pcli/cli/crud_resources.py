@@ -11,15 +11,14 @@ from pcli.adapters.client import create_client
 from pcli.adapters.resource_handler import (
     coerce_mutation_fields,
     create_resource_sync,
-    delete_resource_sync,
     fetch_resource_sync,
     list_resource_sync,
+    mutate_resource_sync,
     mutation_error_details,
     require_confirmation,
     resolve_only_changed,
     serialize_resource,
     serialize_resource_list,
-    update_resource_sync,
 )
 from pcli.cli.io import emit_success
 from pcli.core.errors import PcliError, UsageValidationError
@@ -300,14 +299,15 @@ def build_crud_resource_app(spec: CrudResourceSpec) -> typer.Typer:
         validate_raw_allowed(raw=global_options.raw, command_path=f"{spec.cli_name} update")
         client, runtime_context = create_client(global_options)
         full_perms = parse_bool(updates["full_perms"]) if "full_perms" in updates else False
-        item = fetch_resource_sync(
-            client,
-            helper_name=spec.helper_attr,
-            item_id=resource_id,
-            full_perms=full_perms,
-        )
         try:
-            updated = update_resource_sync(item, fields=fields, only_changed=only_changed)
+            updated = mutate_resource_sync(
+                client,
+                helper_name=spec.helper_attr,
+                item_id=resource_id,
+                full_perms=full_perms,
+                fields=fields,
+                only_changed=only_changed,
+            )
         except Exception as exc:  # pragma: no cover - defensive mapping
             raise PcliError(
                 f"{spec.cli_name} update failed.",
@@ -359,14 +359,13 @@ def build_crud_resource_app(spec: CrudResourceSpec) -> typer.Typer:
         validate_raw_allowed(raw=global_options.raw, command_path=f"{spec.cli_name} delete")
         client, runtime_context = create_client(global_options)
         full_perms = parse_bool(updates["full_perms"]) if "full_perms" in updates else False
-        item = fetch_resource_sync(
-            client,
-            helper_name=spec.helper_attr,
-            item_id=resource_id,
-            full_perms=full_perms,
-        )
         try:
-            deleted = delete_resource_sync(item)
+            deleted = mutate_resource_sync(
+                client,
+                helper_name=spec.helper_attr,
+                item_id=resource_id,
+                full_perms=full_perms,
+            )
         except Exception as exc:  # pragma: no cover - defensive mapping
             raise PcliError(
                 f"{spec.cli_name} delete failed.",

@@ -8,6 +8,7 @@ from collections.abc import Mapping
 from dataclasses import dataclass
 from typing import Any
 
+from pcli.adapters.errors import REQUEST_ERRORS, normalize_error
 from pcli.core.errors import UsageValidationError
 from pcli.core.options import parse_bool, parse_scalar
 
@@ -26,6 +27,9 @@ class ListPage:
 
 def mutation_error_details(exc: Exception) -> dict[str, Any]:
     """Extract server payload details from an exception where possible."""
+    if isinstance(exc, REQUEST_ERRORS):
+        error = normalize_error(exc)
+        return {"error": error.payload.message, **error.payload.details}
     payload = getattr(exc, "payload", None)
     if payload is not None:
         return {"server_payload": payload, "error": str(exc)}
@@ -354,3 +358,33 @@ async def delete_resource(resource_item: Any) -> bool:
 def delete_resource_sync(resource_item: Any) -> bool:
     """Synchronous wrapper for delete_resource."""
     return asyncio.run(delete_resource(resource_item))
+
+
+def mutate_resource_sync(
+    client: Any,
+    *,
+    helper_name: str,
+    item_id: int,
+    full_perms: bool = False,
+    fields: Mapping[str, Any] | None = None,
+    only_changed: bool = True,
+) -> bool:
+    """Keep initialization, fetch, mutation, and session close on the same loop."""
+
+    async def run() -> bool:
+        try:
+            item = await fetch_resource(
+                client,
+                helper_name=helper_name,
+                item_id=item_id,
+                full_perms=full_perms,
+            )
+            if fields is None:
+                return await delete_resource(item)
+            return await update_resource(item, fields=fields, only_changed=only_changed)
+        finally:
+            close = getattr(client, "close", None)
+            if close is not None:
+                await close()
+
+    return asyncio.run(run())

@@ -152,8 +152,22 @@ def test_crud_resource_create_update_delete_routes(
     monkeypatch.setattr(crud_cli, "create_client", fake_create_client)
     monkeypatch.setattr(crud_cli, "fetch_resource_sync", fake_fetch)
     monkeypatch.setattr(crud_cli, "create_resource_sync", fake_create_resource)
-    monkeypatch.setattr(crud_cli, "update_resource_sync", fake_update)
-    monkeypatch.setattr(crud_cli, "delete_resource_sync", fake_delete)
+
+    def fake_mutate(
+        client: Any,
+        *,
+        helper_name: str,
+        item_id: int,
+        full_perms: bool = False,
+        fields: dict[str, Any] | None = None,
+        only_changed: bool = True,
+    ) -> bool:
+        item = fake_fetch(client, helper_name=helper_name, item_id=item_id, full_perms=full_perms)
+        if fields is None:
+            return fake_delete(item)
+        return fake_update(item, fields=fields, only_changed=only_changed)
+
+    monkeypatch.setattr(crud_cli, "mutate_resource_sync", fake_mutate)
 
     create_result = runner.invoke(app, [resource, "create", "name=demo"])
     update_result = runner.invoke(

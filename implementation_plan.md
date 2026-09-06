@@ -388,3 +388,15 @@ Acceptance evidence: nine patch-specific tests, 100 sequential plus 400 concurre
 schema generations, and 209 selected upstream 0.28.0 regression tests passed. This fixes
 the demonstrated inspector races without serializing requests; it does not claim universal
 thread safety for all third-party schema extensions.
+
+## 8. Audit Fixes (2026-09-07)
+
+- [x] A1: Single-loop generic mutations and structured dependency/CLI errors; local HTTP tests.
+- [ ] A2: Correct server ordering and preserve selected-ID priority before limiting.
+- [ ] A3: Document/hit-position cursors, honest completion metadata, and pipeline error propagation.
+- [ ] A4: Preserve literal evidence in rg output; remove duplicate OCR text, implement text output
+  and an explicit character bound; reject unsupported standalone page bounds.
+- [ ] A5: Review units, run regression/static checks, update contracts, and commit completed units.
+
+Deferred for discussion: fully streaming retrieval, default document size metadata, expanded
+command help, and PDF page extraction. No production mutations during verification.
