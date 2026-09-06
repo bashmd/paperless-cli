@@ -368,3 +368,23 @@ Objective: make global installation of `pcli` trivial and predictable for operat
 1. Phases 0-6 completed with all acceptance criteria met.
 2. All implemented commands documented and validated against `plan.md`.
 3. No open critical defects in auth, retrieval pipeline, or destructive operation safeguards.
+
+## 7. Deployment Follow-Up: Schema Concurrency (2026-09-06)
+
+- [x] Reproduce both schema inspector races on drf-spectacular 0.28.0 and 0.30.0.
+- [x] Adapt per-view inspector isolation to deployed 0.28.0, including weak-reference lifecycle.
+- [x] Preserve the patch, nine deterministic/lifecycle tests, stress test, and runbook in
+  `deployment/schema-isolation/`.
+- [x] Build a source-hash-guarded derived image pinned to the original Paperless 2.20.10 digest.
+- [x] Back up deployment configuration; correct duplicate YAML and literal-dollar parsing
+  without changing actual runtime environment or storage.
+- [x] Recreate only the webserver; verify health and unchanged environment, mounts, ports,
+  and network names. PostgreSQL and Redis were not restarted.
+- [x] Verify 64/64 concurrent schema responses equal the sequential baseline, compared
+  with 4/16 HTTP 500 responses before deployment; verify eight concurrent pcli invocations.
+- [x] Validate pinned rollback configuration and document deliberate upgrade requirements.
+
+Acceptance evidence: nine patch-specific tests, 100 sequential plus 400 concurrent local
+schema generations, and 209 selected upstream 0.28.0 regression tests passed. This fixes
+the demonstrated inspector races without serializing requests; it does not claim universal
+thread safety for all third-party schema extensions.
