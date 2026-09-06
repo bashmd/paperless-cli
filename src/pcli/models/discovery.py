@@ -193,9 +193,12 @@ def canonicalize_document_search(
             "owner",
             "page_count",
         }
-        if normalized_sort.lstrip("-") not in fields and not normalized_sort.lstrip("-").startswith(
-            "custom_field_"
-        ):
+        field = normalized_sort.removeprefix("-")
+        custom_id = field.removeprefix("custom_field_")
+        custom_field = (
+            field.startswith("custom_field_") and custom_id.isdecimal() and int(custom_id) > 0
+        )
+        if field not in fields and not custom_field:
             raise UsageValidationError(
                 "Full-text search requires a supported single sort field (for example -created).",
                 error_code="INVALID_SEARCH_SORT",

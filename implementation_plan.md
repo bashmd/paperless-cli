@@ -396,7 +396,14 @@ thread safety for all third-party schema extensions.
 - [x] A3: Document/hit-position cursors, honest completion metadata, and pipeline error propagation.
 - [x] A4: Preserve literal evidence in rg output; remove duplicate OCR text, implement text output
   and an explicit character bound; reject unsupported standalone page bounds.
-- [ ] A5: Review units, run regression/static checks, update contracts, and commit completed units.
+- [x] A5: Review units, run regression/static checks, update contracts, and commit completed units.
 
 Deferred for discussion: fully streaming retrieval, default document size metadata, expanded
 command help, and PDF page extraction. No production mutations during verification.
+
+Audit-fix acceptance evidence: 289 tests pass; Ruff and mypy pass. Local HTTP/subprocess
+checks cover actual update/delete requests, transport exit codes, search ordering on the
+wire, and producer-error propagation. Thirty-six scan-resumption combinations exercise
+API-page boundaries and match/character/page budgets without dropped or repeated hits.
+OCR chunk reconstruction and literal comparison/markup rendering are tested. Four fix
+commits complete the audit units; no production mutations or deployment changes were made.

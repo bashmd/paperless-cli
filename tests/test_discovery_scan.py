@@ -141,5 +141,6 @@ def test_sort_mapping_and_unsupported_composite_search_sort() -> None:
     params = canonicalize_document_search(query="invoice", sort="-created").to_reduce_params()
     assert params["ordering"] == "-created"
     assert "sort" not in params
-    with pytest.raises(UsageValidationError):
-        canonicalize_document_search(query="invoice", sort="-created,id")
+    for sort in ["-created,id", "--created", "custom_field_1,title", "custom_field_bad"]:
+        with pytest.raises(UsageValidationError):
+            canonicalize_document_search(query="invoice", sort=sort)

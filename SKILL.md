@@ -56,7 +56,9 @@ Check `complete` and `stop_reason`: limits do not mean exhaustion. Resume with t
 same query/fields/page size and `cursor=...` (without `page`); per-call budgets can
 change. The shortlist examples deliberately use `allow_partial=true` on consumers.
 Without that opt-in, incomplete input fails instead of silently dropping coverage.
-Failed producers always fail the consumer, even with `allow_partial=true`.
+Upstream error records always fail the consumer, even with `allow_partial=true`.
+Use `set -o pipefail` in shell pipelines as well: a process killed before emitting
+anything cannot supply an error record.
 
 ## 6. Fast Triage Heuristics
 

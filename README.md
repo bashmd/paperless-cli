@@ -155,6 +155,8 @@ Pipelines reject upstream failures, unterminated NDJSON, and incomplete producer
 Use `allow_partial=true` on a consumer only when you intentionally want a bounded
 shortlist rather than exhaustive coverage. Its summary retains `input_complete=false`.
 An impossible budget returns `BUDGET_TOO_SMALL`, never a misleading empty success.
+Use `set -o pipefail` in shell pipelines too, to catch processes that fail before
+emitting any records. Empty raw-ID input cannot distinguish that from an empty list.
 
 `sort=-created` is translated to Paperless's `ordering` parameter. Full-text search
 supports a single ordering field; unsupported composites are rejected. Default

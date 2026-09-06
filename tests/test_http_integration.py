@@ -7,6 +7,7 @@ import threading
 from collections.abc import Iterator
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from typing import Any
+from urllib.parse import parse_qs, urlsplit
 
 import pytest
 
@@ -29,6 +30,10 @@ def local_api() -> Iterator[tuple[str, list[str]]]:
             self.wfile.write(data)
 
         def do_GET(self) -> None:
+            if self.path.startswith("/api/documents/"):
+                methods.append(self.path)
+                self.respond({"count": 0, "next": None, "previous": None, "results": [], "all": []})
+                return
             if self.path.startswith("/api/tags/"):
                 status = self.path.rstrip("/").split("/")[-1]
                 if status in {"401", "403", "404", "500"}:
@@ -109,3 +114,27 @@ def test_failed_producer_exits_nonzero_without_pipefail() -> None:
     result = run_cli("docs", "peek", "from_stdin=true", input='{"ok":false,"error":{}}\n')
     assert result.returncode == 6
     assert json.loads(result.stdout)["error"]["code"] == "UPSTREAM_FAILED"
+
+
+def test_sort_reaches_real_dependency_request(local_api: tuple[str, list[str]]) -> None:
+    url, requests = local_api
+    result = run_cli("docs", "find", "query=fixture", "sort=-created", f"url={url}", "token=test")
+    assert result.returncode == 0, result.stdout + result.stderr
+    request = next(path for path in requests if path.startswith("/api/documents/"))
+    params = parse_qs(urlsplit(request).query)
+    assert params["ordering"] == ["-created"]
+    assert "sort" not in params
+
+
+@pytest.mark.parametrize(("status", "exit_code"), [(401, 3), (403, 5), (404, 4), (500, 6)])
+def test_mutation_does_not_disguise_transport_failures(
+    local_api: tuple[str, list[str]],
+    status: int,
+    exit_code: int,
+) -> None:
+    result = run_cli(
+        "tags", "update", str(status), "name=After", f"url={local_api[0]}", "token=test"
+    )
+    assert result.returncode == exit_code, result.stdout + result.stderr
+    assert json.loads(result.stdout)["ok"] is False
+    assert result.stderr == ""

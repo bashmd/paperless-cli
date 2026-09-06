@@ -8,6 +8,7 @@ from typing import Annotated, Any
 import typer
 
 from pcli.adapters.client import create_client
+from pcli.adapters.errors import REQUEST_ERRORS, normalize_error
 from pcli.adapters.resource_handler import (
     coerce_mutation_fields,
     create_resource_sync,
@@ -246,6 +247,10 @@ def build_crud_resource_app(spec: CrudResourceSpec) -> typer.Typer:
         client, runtime_context = create_client(global_options)
         try:
             result = create_resource_sync(client, helper_name=spec.helper_attr, fields=fields)
+        except PcliError:
+            raise
+        except REQUEST_ERRORS as exc:
+            raise normalize_error(exc) from exc
         except Exception as exc:  # pragma: no cover - defensive mapping
             raise PcliError(
                 f"{spec.cli_name} create failed.",
@@ -308,6 +313,10 @@ def build_crud_resource_app(spec: CrudResourceSpec) -> typer.Typer:
                 fields=fields,
                 only_changed=only_changed,
             )
+        except PcliError:
+            raise
+        except REQUEST_ERRORS as exc:
+            raise normalize_error(exc) from exc
         except Exception as exc:  # pragma: no cover - defensive mapping
             raise PcliError(
                 f"{spec.cli_name} update failed.",
@@ -366,6 +375,10 @@ def build_crud_resource_app(spec: CrudResourceSpec) -> typer.Typer:
                 item_id=resource_id,
                 full_perms=full_perms,
             )
+        except PcliError:
+            raise
+        except REQUEST_ERRORS as exc:
+            raise normalize_error(exc) from exc
         except Exception as exc:  # pragma: no cover - defensive mapping
             raise PcliError(
                 f"{spec.cli_name} delete failed.",
