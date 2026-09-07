@@ -449,7 +449,7 @@ No production requests, mutations, or deployment changes were needed for this wo
 
 - [x] F1: Stream facet counters with bounded document retention, explicit scope/corpus
   completion and truncated-value metadata; verify limits, failures, and cleanup; commit.
-- [ ] F2: Include page_count and raw OCR chars_total in discovery by default, preserve
+- [x] F2: Include page_count and raw OCR chars_total in discovery by default, preserve
   IDs-only and explicit fields, distinguish unknown from zero and excerpt size; commit.
 - [ ] F3: Implement PDF page extraction for get, including max_pages alone, archive/original
   selection, source-aware offsets, page boundaries, clear unsupported/encrypted/invalid

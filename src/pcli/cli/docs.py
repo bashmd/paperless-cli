@@ -90,7 +90,7 @@ _FIND_KNOWN_OPTION_KEYS = {
     "max_hits_per_doc",
     "cursor",
 }
-_DEFAULT_FIND_FIELDS = ["id", "title", "created", "score", "snippet"]
+_DEFAULT_FIND_FIELDS = ["id", "title", "created", "page_count", "chars_total", "score", "snippet"]
 _SNIPPET_MAX_CHARS = 240
 _PEEK_KNOWN_OPTION_KEYS = _FIND_KNOWN_OPTION_KEYS | {
     "ids",
@@ -99,7 +99,7 @@ _PEEK_KNOWN_OPTION_KEYS = _FIND_KNOWN_OPTION_KEYS | {
     "per_doc_max_chars",
     "max_chars",
 }
-_DEFAULT_PEEK_FIELDS = ["id", "title", "created", "tags", "excerpt"]
+_DEFAULT_PEEK_FIELDS = ["id", "title", "created", "page_count", "chars_total", "tags", "excerpt"]
 _DEFAULT_PEEK_MAX_DOCS = 20
 _DEFAULT_PEEK_MAX_CHARS = 1200
 _SKIM_KNOWN_OPTION_KEYS = _PEEK_KNOWN_OPTION_KEYS | {
@@ -256,8 +256,10 @@ def _rg_find_line(row: dict[str, Any], *, ids_only: bool) -> str:
     for key in ("added", "created", "modified"):
         if key in row and row.get(key) is not None:
             bracket_parts.append(f"{key}={_rg_scalar(row[key])}")
-    if row.get("page_count") is not None:
+    if "page_count" in row:
         bracket_parts.append(f"p={_rg_scalar(row['page_count'])}")
+    if "chars_total" in row:
+        bracket_parts.append(f"chars_total={_rg_scalar(row['chars_total'])}")
     if row.get("score") is not None:
         bracket_parts.append(f"score={_rg_scalar(row['score'])}")
     if bracket_parts:
@@ -283,6 +285,7 @@ def _rg_find_line(row: dict[str, Any], *, ids_only: bool) -> str:
         "created",
         "modified",
         "page_count",
+        "chars_total",
         "score",
     }
     extras = [
@@ -303,8 +306,10 @@ def _rg_peek_line(row: dict[str, Any]) -> str:
     for key in ("added", "created", "modified"):
         if key in row and row.get(key) is not None:
             bracket_parts.append(f"{key}={_rg_scalar(row[key])}")
-    if row.get("page_count") is not None:
+    if "page_count" in row:
         bracket_parts.append(f"p={_rg_scalar(row['page_count'])}")
+    if "chars_total" in row:
+        bracket_parts.append(f"chars_total={_rg_scalar(row['chars_total'])}")
     bracket_parts.append(f"chars={_rg_scalar(row.get('chars'))}")
     truncated = row.get("truncated")
     if isinstance(truncated, bool):
@@ -331,6 +336,7 @@ def _rg_peek_line(row: dict[str, Any]) -> str:
         "created",
         "modified",
         "page_count",
+        "chars_total",
         "chars",
         "truncated",
     }
@@ -352,6 +358,11 @@ def _rg_skim_lines(item: dict[str, Any]) -> list[str]:
     hit = item.get("hit")
     if hit is not None:
         head += f" {_rg_scalar(hit)}"
+    if "page_count" in item or "chars_total" in item:
+        head += (
+            f" [p={_rg_scalar(item.get('page_count'))} "
+            f"chars_total={_rg_scalar(item.get('chars_total'))}]"
+        )
 
     lines = [head]
     text = item.get("text")
@@ -495,9 +506,23 @@ def _sorted_find_documents(documents: list[Any]) -> list[Any]:
     return sorted(documents, key=_sort_key)
 
 
+def _document_sizes(document: Any) -> dict[str, int | None]:
+    content = getattr(document, "content", None)
+    pages = getattr(document, "page_count", None)
+    return {
+        "page_count": pages
+        if isinstance(pages, int) and not isinstance(pages, bool) and pages > 0
+        else None,
+        "chars_total": len(content) if isinstance(content, str) else None,
+    }
+
+
 def _project_find_document(document: Any, fields: list[str]) -> dict[str, Any]:
     projected: dict[str, Any] = {}
     for field_name in fields:
+        if field_name in {"page_count", "chars_total"}:
+            projected[field_name] = _document_sizes(document)[field_name]
+            continue
         if field_name == "score":
             projected[field_name] = _document_score(document)
             continue
@@ -649,6 +674,9 @@ def _project_peek_document(
         if field_name == "excerpt":
             projected[field_name] = excerpt
             continue
+        if field_name in {"page_count", "chars_total"}:
+            projected[field_name] = _document_sizes(document)[field_name]
+            continue
         projected[field_name] = _normalize_scalar_output(getattr(document, field_name, None))
     projected["chars"] = char_count
     projected["truncated"] = truncated
@@ -683,6 +711,7 @@ def _extract_skim_hits(
                 "end": end,
                 "text": source[excerpt_start:excerpt_end],
                 "score": 1.0,
+                **_document_sizes(document),
             }
         )
         if len(hits) >= max_hits_per_doc:

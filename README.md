@@ -142,6 +142,12 @@ pcli get 123 format=text start_char=5000 max_chars=5000
 
 Other command groups currently emit JSON.
 
+Discovery includes `page_count` and `chars_total` by default (`p=` and `chars_total=`
+in rg output). Character totals measure raw OCR Unicode characters, not excerpt
+length or tokens. Unknown sizes are `null`/`-`; empty OCR is zero. Peek's `chars`
+still describes its returned excerpt. `find ids_only=true` stays IDs-only, and
+explicit `fields=` on find/peek controls which size hints are included.
+
 `find`, `peek`, and `skim` emit rg/NDJSON rows as documents are processed, without
 loading the entire scan first. API pages contain at most 150 documents, fewer for
 tight document/page budgets. Small match limits start with a small fetch; sparse
