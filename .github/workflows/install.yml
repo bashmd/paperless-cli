@@ -1,0 +1,27 @@
+name: Fresh install
+
+on: [push, pull_request]
+
+permissions:
+  contents: read
+
+jobs:
+  install:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        python: ['3.12', '3.13', '3.14']
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+      - name: Install Python
+        run: uv python install '${{ matrix.python }}'
+      # Resolve package metadata, not uv.lock, just as a user's uvx install does.
+      - name: Bootstrap without development dependencies
+        run: |
+          uvx --python '${{ matrix.python }}' --from . pcli --help
+          uvx --python '${{ matrix.python }}' --from . pcli install --help
+      - name: Test freshly resolved dependencies
+        run: >-
+          uv run --isolated --no-project --python '${{ matrix.python }}'
+          --with . --with 'pytest>=8.3,<9' pytest -q

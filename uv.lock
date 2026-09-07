@@ -521,6 +521,7 @@ name = "pcli"
 version = "0.1.0"
 source = { editable = "." }
 dependencies = [
+    { name = "click" },
     { name = "pypaperless" },
     { name = "pypdf" },
     { name = "typer" },
@@ -536,9 +537,10 @@ dev = [
 
 [package.metadata]
 requires-dist = [
+    { name = "click", specifier = ">=8.3,<9" },
     { name = "pypaperless", specifier = ">=5.2,<6.0" },
     { name = "pypdf", specifier = ">=6.17,<7" },
-    { name = "typer", specifier = ">=0.12,<1.0" },
+    { name = "typer", specifier = ">=0.24.1,<0.26" },
 ]
 
 [package.metadata.requires-dev]

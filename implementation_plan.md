@@ -504,3 +504,24 @@ resume a partial shortlist, peek and skim selected IDs, and reconstruct a bounde
 Variants cover all/either tag matching, document types, and import-date filtering.
 Reviewed the final diff; no production requests or mutations were made. This validates
 executable recipes, not independent first-time-agent usability.
+
+## 12. Fresh Install Dependency Fix
+
+- [x] I1: Reproduce uvx startup failure outside the lockfile environment; declare
+  Click directly and constrain Typer to the compatible external-Click releases.
+- [x] I2: Add fresh-resolution CI across supported Python versions; verify help,
+  structured usage errors, full regressions, and an isolated rust=true installation.
+- [x] I3: Review, commit, and push the packaging fix.
+
+Cause: uv.lock retained Typer 0.24.1, but package metadata allowed Typer 0.26+,
+which vendors Click and no longer installs the external package. Merely adding
+Click would not fix exception-class compatibility with vendored Typer.
+
+Acceptance: all 390 tests pass with the locked development environment and with
+freshly resolved dependencies on Python 3.12, 3.13, and 3.14. Fresh resolution uses
+Typer 0.25.1 and Click 8.5.0; two upstream Click deprecation warnings remain.
+Ruff and strict mypy pass. A real uvx-to-tool rust=true installation into temporary
+XDG directories succeeds; the installed executable emits structured usage errors
+and its Python interpreter confirms the Rust normalizer is active and correct.
+Fresh-install CI runs bootstrap checks without dev dependencies and the full test
+suite without uv.lock on all three Python versions. No production access required.
