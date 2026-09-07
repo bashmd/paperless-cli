@@ -10,7 +10,7 @@
 3. Run discovery performance benchmark:
    - `uv run python benchmarks/discovery_benchmark.py --docs 10000 --chars 2500 --repeats 3`
 4. Run NDJSON memory validation:
-   - `uv run python benchmarks/ndjson_memory_check.py --items 250000 --text-size 256 --max-peak-mb 160`
+   - `uv run python benchmarks/ndjson_memory_check.py --items 250000 --text-size 256 --max-peak-mb 16`
 
 ## 2. Contract and Documentation Checks
 

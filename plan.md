@@ -452,6 +452,8 @@ This amendment supersedes conflicting ranking, budget, and cursor rules above:
    while JSON buffers only output rows. Transport page size is at most 150 and can shrink for
    per-call budgets; `page_size` remains the output row limit and logical initial-page size.
    Cursors retain absolute document/hit positions regardless of transport page size.
+   Small match budgets reduce the initial fetch; sparse scans then expand to regular
+   bounded pages, skipping any overlapping prefix by absolute document position.
 10. Selected-ID document bodies use bounded reorder windows, preserving input priority.
    Stdin is read line-by-line but its ID selection is validated to EOF before fetching;
    this intentionally prevents failed producers from becoming successful downstream scans.

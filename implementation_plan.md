@@ -414,7 +414,7 @@ commits complete the audit units; no production mutations or deployment changes 
   and immediate rg/NDJSON output. Preserve positional cursors and all budget semantics.
 - [x] S2: Verify early output, bounded fetching/retention, late failures, cleanup, and cursor
   resumption using synthetic sources and a local HTTP server; review and commit the unit.
-- [ ] S3: Replace the serialization-only memory benchmark with a real scan benchmark,
+- [x] S3: Replace the serialization-only memory benchmark with a real scan benchmark,
   document measured results and streaming limits, run all checks, and commit.
 
 Acceptance: output precedes later-page responses; early budgets do not fetch the full scan;
@@ -436,3 +436,11 @@ absolute positions skip any overlap after changing transport page size. Local HT
 evidence finds a sole hit at document 400 in four requests, not 200. Selected-ID tests
 verify the same expansion preserves rank. Closed stdout is also handled while reporting
 a late API failure, not only while printing successful rows.
+
+Final acceptance: 351 tests pass; Ruff and strict mypy pass, including the new benchmark.
+The synthetic 2,000 x 10,000-character one-hit scan fetches 2 bodies rather than 2,000;
+peak Python allocations drop from 19.3349 MiB (eager baseline) to 0.0429 MiB. Complete
+2,000/20,000-document scans stay around 2.9 MiB. The 250,000-row memory gate passes at
+0.1383 MiB, emitting all rows. Measurements exclude HTTP/schema, Rust allocations, and
+server-provided corpus ID metadata; README and performance docs state these limits.
+No production requests, mutations, or deployment changes were needed for this work.

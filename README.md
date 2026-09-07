@@ -142,6 +142,12 @@ pcli get 123 format=text start_char=5000 max_chars=5000
 
 Other command groups currently emit JSON.
 
+`find`, `peek`, and `skim` emit rg/NDJSON rows as documents are processed, without
+loading the entire scan first. API pages contain at most 150 documents, fewer for
+tight document/page budgets. Small match limits start with a small fetch; sparse
+scans then expand to regular-sized pages. Selected IDs use bounded reorder windows to
+preserve your input order. JSON still buffers the result rows into one envelope.
+
 ## Discovery Completion
 
 Discovery summaries include `complete`, `stop_reason`, and `next_cursor`. A budget
@@ -155,6 +161,11 @@ Pipelines reject upstream failures, unterminated NDJSON, and incomplete producer
 Use `allow_partial=true` on a consumer only when you intentionally want a bounded
 shortlist rather than exhaustive coverage. Its summary retains `input_complete=false`.
 An impossible budget returns `BUDGET_TOO_SMALL`, never a misleading empty success.
+Streamed rows are provisional until the final summary. A later request failure
+exits nonzero without a success summary; NDJSON ends with an `error` record.
+Lookahead may fetch another API page to distinguish a budget stop from exhaustion.
+Stdin consumers validate the producer's full ID selection before fetching documents;
+they retain the IDs, not the raw input or all document bodies.
 Use `set -o pipefail` in shell pipelines too, to catch processes that fail before
 emitting any records. Empty raw-ID input cannot distinguish that from an empty list.
 
