@@ -179,7 +179,7 @@ emitting any records. Empty raw-ID input cannot distinguish that from an empty l
 supports a single ordering field; unsupported composites are rejected. Default
 search order is server relevance order, without per-batch local re-ranking.
 
-## Current Retrieval Limitation
+## Facet Coverage
 
 `docs facets query="invoice" by=tags,year facet_scope=all` counts incrementally.
 `complete` describes the requested scope (`page` by default); `corpus_complete`
@@ -187,6 +187,8 @@ is true only when the entire query was counted from the beginning. `max_docs`
 can make either scope partial. `values_truncated` identifies dimensions limited
 by `top_values`, independently of scan completion. Facet counts are not resumable
 or safe to merge by adding top-value lists.
+
+## Document Retrieval
 
 `docs get` returns OCR-backed text (`source=ocr`) once, without duplicating it in
 document metadata. The default `max_chars=20000` bounds returned OCR text; choose a
@@ -196,8 +198,36 @@ offset. JSON reports `chars_total`, `start_char`, `end_char`, `next_start`, and
 `truncated`; text mode puts only OCR text on stdout and a truncation/resume notice
 on stderr. These bounds do not reduce the document response fetched from the API.
 
-`max_pages` alone now fails explicitly rather than returning unlimited text.
-Page-targeted extraction from archive/original files is not implemented yet; page/source combinations that require file extraction return explicit validation errors.
+For actual PDF page text:
+
+```bash
+pcli get 123 pages=1,3-5
+pcli get 123 max_pages=5 format=text
+pcli get 123 source=original pages=2-3 max_chars=5000
+```
+
+Pages are 1-based, deduplicated, and sorted. `max_pages` caps that selection; alone,
+it selects the first N PDF pages. `source=auto` prefers the archive, then the original
+when the archive is absent or not a PDF. Auth/server errors, malformed PDFs, and
+out-of-range selected pages fail explicitly. Explicit sources never fall back.
+`source=ocr` cannot take page bounds. Encrypted PDFs and non-PDF originals are not
+supported for file extraction.
+
+PDF text uses the file's text layer, not a new OCR pass. `empty_pages` identifies
+selected pages with no extracted text; they might be blank or image-only, not devoid
+of information. See [pypdf's extraction limitations](https://pypdf.readthedocs.io/en/stable/user/extract-text.html).
+
+JSON contains text once and `page_spans` with absolute character bounds for each
+selected page. Pages are joined with `\n\f\n`; PDF `start_char`/`next_start` refer to
+that selected text, **not** Paperless OCR or skim offsets. Resume with the same source
+and selection. `chars_total` counts only this selected text; `page_count` counts the
+actual source PDF pages. `pages_truncated` and `next_page` report a page-selection
+cap separately from character truncation. `next_page` is a hint, not a cursor for
+noncontiguous selections. Text mode reports truncation and empty pages on stderr.
+
+The complete file is downloaded and the selected pages are parsed before text is
+returned. Page/character bounds are not download-byte or parser-memory limits.
+Selections expanding beyond 100,000 pages are rejected; use a narrower range or cap.
 
 ## Optional Rust Acceleration
 

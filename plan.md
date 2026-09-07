@@ -465,9 +465,28 @@ This amendment supersedes conflicting ranking, budget, and cursor rules above:
     and exposes `next_start` for subsequent chunks. Metadata excludes duplicate
     `content`; `data.text` is the only OCR payload. `format=text` emits literal text
     on stdout, with truncation information on stderr. JSON retains structured bounds.
-13. Standalone `max_pages` fails explicitly until page extraction exists. Character
-    limits bound returned text, not API download size. Raw OCR offsets differ from
-    normalized skim offsets; neither cursor nor chunk retrieval is a snapshot.
+13. `pages` or standalone `max_pages` selects PDF extraction; without either, auto
+    still uses OCR. `max_pages` alone selects the first N available PDF pages.
+    Auto prefers archive, falling back to original only for absence or non-PDF format,
+    never permission/server errors. Explicit sources never fall back. Malformed,
+    encrypted, and non-PDF files fail clearly; no new OCR engine is invoked.
+14. PDF output contains one `data.text`, joined with `\n\f\n`, and absolute `page_spans`.
+    Raw PDF offsets and `chars_total` refer to selected PDF text, not OCR or normalized
+    skim offsets. Preserve source/selection when resuming character chunks.
+    `empty_pages` reports missing text layers without claiming the pages are blank.
+    `pages_truncated`/`next_page` report selection caps separately from text truncation;
+    next_page is a hint, not a resumable noncontiguous-page selector. Selected pages
+    outside the PDF range fail rather than being silently skipped.
+15. Character limits bound returned text, not download size or PDF-parser memory.
+    Huge page specs are capped before expansion; uncapped expansions beyond 100,000
+    pages fail. Neither cursor nor chunk retrieval is a snapshot.
+16. Discovery size hints use server page_count and raw OCR chars_total, without extra
+    requests; null means unknown and zero means empty OCR. They are default find/peek
+    fields and present on skim hits. IDs-only stays IDs-only; explicit fields can omit
+    hints. Peek chars still describes the excerpt, not the document.
+17. Facets retain counters, not document bodies. complete describes the requested
+    facet_scope; corpus_complete requires an exhausted scan from the beginning.
+    values_truncated reports top_values caps independently. Counts are not resumable.
 
 ## 9. Management Contract by Resource
 

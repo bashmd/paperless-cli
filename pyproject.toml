@@ -10,6 +10,7 @@ authors = [
 requires-python = ">=3.12,<3.15"
 dependencies = [
     "pypaperless>=5.2,<6.0",
+    "pypdf>=6.17,<7",
     "typer>=0.12,<1.0",
 ]
 

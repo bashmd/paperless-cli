@@ -1,6 +1,6 @@
 """Adapt small list fixtures to the discovery adapter's async iterator interface."""
 
-from collections.abc import AsyncGenerator, Callable
+from collections.abc import AsyncGenerator, Awaitable, Callable
 from typing import Any
 
 
@@ -12,3 +12,10 @@ def streaming_fake[T](
             yield item
 
     return iterate
+
+
+def async_result[T](call: Callable[..., T]) -> Callable[..., Awaitable[T]]:
+    async def run(*args: Any, **kwargs: Any) -> T:
+        return call(*args, **kwargs)
+
+    return run

@@ -451,7 +451,7 @@ No production requests, mutations, or deployment changes were needed for this wo
   completion and truncated-value metadata; verify limits, failures, and cleanup; commit.
 - [x] F2: Include page_count and raw OCR chars_total in discovery by default, preserve
   IDs-only and explicit fields, distinguish unknown from zero and excerpt size; commit.
-- [ ] F3: Implement PDF page extraction for get, including max_pages alone, archive/original
+- [x] F3: Implement PDF page extraction for get, including max_pages alone, archive/original
   selection, source-aware offsets, page boundaries, clear unsupported/encrypted/invalid
   PDF failures, same-loop download cleanup, and fixture-based integration tests; commit.
 - [ ] F4: Expand discovery/get/facets help with defaults, examples, source and continuation
@@ -462,3 +462,9 @@ requested pages. Page extraction reads PDF text layers, not a new OCR engine. JS
 text once plus page-boundary metadata; text mode preserves extracted characters. Character
 limits constrain returned output, not PDF download/parser memory. Keep ordinary OCR get
 and lightweight CLI startup unchanged. Review each unit before committing.
+
+F3 acceptance: 373 tests pass; Ruff/mypy pass. Real PDF fixtures cover German text,
+noncontiguous pages, empty layers, malformed/encrypted files, out-of-range pages,
+and bounded chunks. Local HTTP tests exercise real metadata/download calls, original
+selection, archive 404 fallback, and permission failures without fallback. All get
+requests and cleanup share one event loop; pypdf is imported only on PDF extraction.

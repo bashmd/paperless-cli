@@ -31,8 +31,9 @@ from pcli.core.discovery_scan import ScanResult, scan_batch
 from pcli.core.errors import PcliError, UsageValidationError
 from pcli.core.options import FormatMode, GlobalOptions, parse_bool, parse_scalar
 from pcli.core.output import ndjson_error, ndjson_item, to_json
-from pcli.core.page_spec import normalize_page_selection
+from pcli.core.page_spec import parse_max_pages, parse_pages_spec
 from pcli.core.parsing import parse_tokens
+from pcli.core.pdf_text import PdfText, extract_pdf_text
 from pcli.core.retrieval_source import parse_retrieval_source, resolve_source_candidates
 from pcli.core.validation import validate_raw_allowed
 from pcli.core.whitespace import normalize_whitespace as _normalize_whitespace
@@ -1957,6 +1958,73 @@ def docs_delete(
     )
 
 
+def _retrieve_text_sync(
+    client: Any,
+    document_id: int,
+    *,
+    source: str,
+    pages: list[int] | None,
+    max_pages: int | None,
+    pages_truncated: bool,
+    next_page: int | None,
+) -> tuple[Any, str, PdfText | None]:
+    async def run() -> tuple[Any, str, PdfText | None]:
+        try:
+            document = await _fetch_document(client, document_id)
+            candidates = resolve_source_candidates(
+                source=source,
+                has_page_filter=pages is not None or max_pages is not None,
+            )
+            available = _available_retrieval_sources(document)
+            last_error: Exception | None = None
+            for candidate in candidates:
+                if candidate not in available:
+                    continue
+                if candidate == "ocr":
+                    return document, candidate, None
+                try:
+                    downloaded = await _fetch_binary_document(
+                        client,
+                        action="download",
+                        document_id=document_id,
+                        original=candidate == "original",
+                    )
+                    content, _, _ = _extract_binary_payload(downloaded)
+                    pdf = extract_pdf_text(
+                        content,
+                        pages=pages,
+                        max_pages=max_pages,
+                        pages_truncated=pages_truncated,
+                        next_page=next_page,
+                    )
+                    return document, candidate, pdf
+                except REQUEST_ERRORS as exc:
+                    # A missing archive may fall back; never disguise auth/server failures.
+                    if source != "auto" or int(normalize_error(exc).exit_code) != 4:
+                        raise
+                    last_error = exc
+                except UsageValidationError as exc:
+                    if source != "auto" or exc.payload.code != "UNSUPPORTED_DOCUMENT_FORMAT":
+                        raise
+                    last_error = exc
+            if last_error is not None:
+                raise last_error
+            raise UsageValidationError(
+                "No usable retrieval source is available for this document.",
+                details={
+                    "requested_source": source,
+                    "candidates": candidates,
+                    "available_sources": sorted(available),
+                },
+                error_code="SOURCE_UNAVAILABLE",
+            )
+        finally:
+            if hasattr(client, "close"):
+                await client.close()
+
+    return asyncio.run(run())
+
+
 @app.command(
     "get",
     context_settings={"allow_extra_args": True, "ignore_unknown_options": True},
@@ -1992,16 +2060,19 @@ def docs_get(
             details={"document_id": document_id},
             error_code="INVALID_DOCUMENT_ID",
         )
-    selected_pages = normalize_page_selection(
-        pages=parsed.updates.get("pages"),
-        max_pages=parsed.updates.get("max_pages"),
-    )
-    if "max_pages" in parsed.updates and "pages" not in parsed.updates:
-        raise UsageValidationError(
-            "OCR text has no reliable page boundaries; use max_chars to bound retrieval. "
-            "File-based page extraction is not implemented yet.",
-            error_code="PAGE_EXTRACTION_UNAVAILABLE",
+    max_pages = parse_max_pages(parsed.updates.get("max_pages"))
+    selected_pages = None
+    pages_truncated = False
+    next_page = None
+    if "pages" in parsed.updates:
+        selected_pages = parse_pages_spec(
+            parsed.updates["pages"],
+            max_pages=max_pages + 1 if max_pages is not None else None,
         )
+        if max_pages is not None and len(selected_pages) > max_pages:
+            pages_truncated = True
+            next_page = selected_pages[max_pages]
+            selected_pages = selected_pages[:max_pages]
     max_chars = _parse_positive_int(
         value=parsed.updates.get("max_chars"),
         default=20_000,
@@ -2015,9 +2086,9 @@ def docs_get(
         error_code="INVALID_START_CHAR",
     )
     requested_source = parse_retrieval_source(parsed.updates.get("source"))
-    if selected_pages is not None and requested_source == "ocr":
+    if (selected_pages is not None or max_pages is not None) and requested_source == "ocr":
         raise UsageValidationError(
-            "source=ocr cannot be combined with pages=...",
+            "source=ocr cannot be combined with pages or max_pages.",
             details={"source": "ocr", "pages": selected_pages},
             error_code="INVALID_SOURCE_WITH_PAGES",
         )
@@ -2030,49 +2101,31 @@ def docs_get(
             error_code="UNSUPPORTED_FORMAT",
         )
     client, runtime_context = create_client(global_options)
-    document = _fetch_document_sync(client, document_id)
-
-    source_candidates = resolve_source_candidates(
+    document, resolved_source, pdf = _retrieve_text_sync(
+        client,
+        document_id,
         source=requested_source,
-        has_page_filter=selected_pages is not None,
+        pages=selected_pages,
+        max_pages=max_pages,
+        pages_truncated=pages_truncated,
+        next_page=next_page,
     )
-    available_sources = _available_retrieval_sources(document)
-    resolved_source: str | None = None
-    for candidate in source_candidates:
-        if candidate in available_sources:
-            resolved_source = candidate
-            break
-    if resolved_source is None:
-        raise UsageValidationError(
-            "No usable retrieval source is available for this document.",
-            details={
-                "requested_source": requested_source,
-                "candidates": source_candidates,
-                "available_sources": sorted(available_sources),
-            },
-            error_code="SOURCE_UNAVAILABLE",
-        )
-    if resolved_source != "ocr":
-        raise UsageValidationError(
-            "File-based extraction is not available yet for this source.",
-            details={
-                "source": resolved_source,
-                "pages": selected_pages,
-                "candidates": source_candidates,
-            },
-            error_code=(
-                "PAGE_EXTRACTION_UNAVAILABLE"
-                if selected_pages is not None
-                else "SOURCE_NOT_SUPPORTED"
-            ),
-        )
-
     text = getattr(document, "content", None)
-    content_text = text if isinstance(text, str) else ""
-    page_count = getattr(document, "page_count", None)
+    content_text = pdf.text if pdf is not None else text if isinstance(text, str) else ""
+    page_count = pdf.page_count if pdf is not None else getattr(document, "page_count", None)
+    extraction_meta: dict[str, Any] = {}
+    if pdf is not None:
+        selected_pages = pdf.pages
+        extraction_meta = {
+            "page_spans": pdf.page_spans,
+            "empty_pages": pdf.empty_pages,
+            "pages_truncated": pdf.pages_truncated,
+            "next_page": pdf.next_page,
+            "offset_basis": "selected_pdf_text",
+        }
     if start_char > len(content_text):
         raise UsageValidationError(
-            "start_char is beyond the end of the OCR text.",
+            "start_char is beyond the end of the selected text.",
             details={"chars_total": len(content_text)},
             error_code="INVALID_START_CHAR",
         )
@@ -2082,9 +2135,22 @@ def docs_get(
     if global_options.format_mode is FormatMode.TEXT:
         typer.echo(excerpt, nl=False)
         if truncated:
+            selection = (
+                f"source={resolved_source} pages={','.join(map(str, selected_pages or []))} "
+                if pdf is not None
+                else ""
+            )
             typer.echo(
-                f"# truncated: resume with pcli get {document_id} start_char={end_char} "
+                f"# truncated: resume with pcli get {document_id} {selection}start_char={end_char} "
                 f"max_chars={max_chars} format=text (same profile/url)",
+                err=True,
+            )
+        if pdf is not None and pdf.pages_truncated:
+            typer.echo(f"# page selection capped; next selected page: {pdf.next_page}", err=True)
+        if pdf is not None and pdf.empty_pages:
+            typer.echo(
+                f"# no extractable text on pages: {','.join(map(str, pdf.empty_pages))}; "
+                "these may be blank or image-only, not proof of no content.",
                 err=True,
             )
         return
@@ -2109,6 +2175,7 @@ def docs_get(
             "start_char": start_char,
             "end_char": end_char,
             "next_start": end_char if truncated else None,
+            **extraction_meta,
         },
     )
 

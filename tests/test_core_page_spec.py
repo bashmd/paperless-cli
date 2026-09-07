@@ -57,3 +57,11 @@ def test_normalize_page_selection_applies_cap() -> None:
     assert normalize_page_selection(pages=None, max_pages=None) is None
     assert normalize_page_selection(pages="5,1,3-5", max_pages=None) == [1, 3, 4, 5]
     assert normalize_page_selection(pages="5,1,3-5", max_pages="2") == [1, 3]
+
+
+def test_large_ranges_are_capped_without_expansion() -> None:
+    assert normalize_page_selection(pages="10-1000000000,1-10", max_pages="5") == [1, 2, 3, 4, 5]
+    with pytest.raises(UsageValidationError):
+        normalize_page_selection(pages="1-1000000000", max_pages=None)
+    with pytest.raises(UsageValidationError):
+        normalize_page_selection(pages="1-1000000000,invalid", max_pages="5")

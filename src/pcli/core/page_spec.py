@@ -20,7 +20,7 @@ def parse_max_pages(value: str | None) -> int | None:
     return parsed
 
 
-def parse_pages_spec(value: str) -> list[int]:
+def parse_pages_spec(value: str, *, max_pages: int | None = None) -> list[int]:
     """Parse pages spec (`1`, `1-3`, `1,3,5-7`) into normalized page numbers."""
     raw = value.strip()
     if not raw:
@@ -30,7 +30,7 @@ def parse_pages_spec(value: str) -> list[int]:
             error_code="INVALID_PAGES",
         )
 
-    pages: set[int] = set()
+    intervals: list[tuple[int, int]] = []
     for chunk in raw.split(","):
         token = chunk.strip()
         if not token:
@@ -62,7 +62,7 @@ def parse_pages_spec(value: str) -> list[int]:
                     details={"token": token},
                     error_code="INVALID_PAGES",
                 )
-            pages.update(range(start, end + 1))
+            intervals.append((start, end))
             continue
 
         if not token.isdigit():
@@ -78,15 +78,24 @@ def parse_pages_spec(value: str) -> list[int]:
                 details={"token": token},
                 error_code="INVALID_PAGES",
             )
-        pages.add(page)
+        intervals.append((page, page))
 
-    if not pages:
-        raise UsageValidationError(
-            "pages must contain at least one page.",
-            details={"value": value},
-            error_code="INVALID_PAGES",
-        )
-    return sorted(pages)
+    # Validate all segments before applying the cap; do not expand huge ranges first.
+    pages: list[int] = []
+    for start, end in sorted(intervals):
+        if pages:
+            start = max(start, pages[-1] + 1)
+        if max_pages is not None:
+            end = min(end, start + max_pages - len(pages) - 1)
+        if len(pages) + max(0, end - start + 1) > 100_000:
+            raise UsageValidationError(
+                "Page selection is too large; narrow pages or set max_pages.",
+                error_code="PAGE_SELECTION_TOO_LARGE",
+            )
+        pages.extend(range(start, end + 1))
+        if max_pages is not None and len(pages) >= max_pages:
+            break
+    return pages
 
 
 def normalize_page_selection(
@@ -98,7 +107,4 @@ def normalize_page_selection(
     parsed_max_pages = parse_max_pages(max_pages)
     if pages is None:
         return None
-    parsed_pages = parse_pages_spec(pages)
-    if parsed_max_pages is None:
-        return parsed_pages
-    return parsed_pages[:parsed_max_pages]
+    return parse_pages_spec(pages, max_pages=parsed_max_pages)

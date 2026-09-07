@@ -522,6 +522,7 @@ version = "0.1.0"
 source = { editable = "." }
 dependencies = [
     { name = "pypaperless" },
+    { name = "pypdf" },
     { name = "typer" },
 ]
 
@@ -536,6 +537,7 @@ dev = [
 [package.metadata]
 requires-dist = [
     { name = "pypaperless", specifier = ">=5.2,<6.0" },
+    { name = "pypdf", specifier = ">=6.17,<7" },
     { name = "typer", specifier = ">=0.12,<1.0" },
 ]
 
@@ -660,6 +662,15 @@ dependencies = [
 sdist = { url = "https://files.pythonhosted.org/packages/ac/4a/e327b719ff11e8c424fa58b7bd5a9fdec7b9f03a910311a8a8ee4be0ca52/pypaperless-5.2.2.tar.gz", hash = "sha256:a3cc1e2d2d8a4689cd8d33a98474b2af65c7d9b9724e26f2f15f97f8c6d99c52", size = 163637, upload-time = "2025-12-22T14:55:45.863Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/11/32/32a55895f2b2679692c552a8dc3614d6fd39ec7207f68d7bef253e303311/pypaperless-5.2.2-py3-none-any.whl", hash = "sha256:42457f936dde0a72cd3ed23ae3252a280e2e0e2249c8782f3a9e8c08361c1f60", size = 45568, upload-time = "2025-12-22T14:55:44.534Z" },
+]
+
+[[package]]
+name = "pypdf"
+version = "6.17.0"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/5d/dc/34857a5e31cf708c163929f61a9ba4bd357a8850e49fc4e846ced527b51f/pypdf-6.17.0.tar.gz", hash = "sha256:097ad0d829778ec5b615aeaa5c6da4b6cac4992f8fd80b56f98a1a8c006573bb", size = 7018352, upload-time = "2026-09-04T11:30:44.256Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/c1/08/1e9731038124a9127e1d27848952b86fb32b2f45f8f1b94adc7f0817a6ac/pypdf-6.17.0-py3-none-any.whl", hash = "sha256:5bd827266a21553b74d910e350131a6227b72f2ab4209bf372814b8195fa11c5", size = 388051, upload-time = "2026-09-04T11:30:42.681Z" },
 ]
 
 [[package]]
