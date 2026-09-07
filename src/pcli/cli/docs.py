@@ -1341,18 +1341,12 @@ def _extract_facet_values(document: Any, internal_field: str) -> list[Any]:
 
 
 def _build_facets(
-    documents: list[Any],
-    by_fields: list[str],
+    counters: dict[str, Counter[Any]],
     *,
     top_values: int,
 ) -> dict[str, list[dict[str, Any]]]:
     facets: dict[str, list[dict[str, Any]]] = {}
-    for output_field in by_fields:
-        internal_field = _FACET_FIELD_MAP[output_field]
-        counter: Counter[Any] = Counter()
-        for document in documents:
-            for value in _extract_facet_values(document, internal_field):
-                counter[value] += 1
+    for output_field, counter in counters.items():
         ranked = sorted(counter.items(), key=lambda item: (-item[1], str(item[0])))
         facets[output_field] = [
             {"value": _normalize_scalar_output(value), "count": count}
@@ -2866,8 +2860,29 @@ def docs_facets(
     validate_raw_allowed(raw=global_options.raw, command_path="docs facets")
     client, runtime_context = create_client(global_options)
     adapter = DocumentSearchAdapter()
-    documents = adapter.collect_documents_sync(client, search)
-    facets = _build_facets(documents, by_fields, top_values=top_values)
+    counters: dict[str, Counter[Any]] = {field: Counter() for field in by_fields}
+
+    def aggregate(document: Any) -> list[dict[str, Any]]:
+        for field, counter in counters.items():
+            counter.update(_extract_facet_values(document, _FACET_FIELD_MAP[field]))
+        return []
+
+    result = _run_discovery_scan(
+        client=client,
+        mode=FormatMode.JSON,
+        search=search,
+        fetch=lambda batch: adapter.iter_documents(client, batch),
+        project=aggregate,
+        character_cost=lambda row: 0,
+        page_cost=lambda doc: 1,
+        command="docs.facets",
+        signature={},
+        offset=(search.page - 1) * search.page_size,
+    )
+    scope_complete = result.meta["complete"] or (
+        facet_scope == "page" and search.max_docs == search.page_size
+    )
+    facets = _build_facets(counters, top_values=top_values)
 
     emit_success(
         resource="docs",
@@ -2877,7 +2892,15 @@ def docs_facets(
             "query": search.query,
             "facet_scope": facet_scope,
             "top_values": top_values,
-            "scanned_docs": len(documents),
+            "scanned_docs": result.meta["docs_scanned"],
+            "complete": scope_complete,
+            "corpus_complete": result.meta["complete"] and search.page == 1,
+            "stop_reason": "page_boundary"
+            if scope_complete and not result.meta["complete"]
+            else result.meta["stop_reason"],
+            "values_truncated": {
+                field: len(counts) > top_values for field, counts in counters.items()
+            },
             "profile": runtime_context.profile,
             "max_docs": (
                 None if facet_scope == "all" and not has_explicit_doc_limit else search.max_docs

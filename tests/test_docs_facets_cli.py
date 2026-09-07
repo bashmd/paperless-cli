@@ -4,10 +4,12 @@ from __future__ import annotations
 
 import datetime as dt
 import json
+from collections.abc import AsyncGenerator
 from dataclasses import dataclass
 from typing import Any
 
 import pytest
+from streaming_fakes import streaming_fake
 from typer.testing import CliRunner
 
 import pcli.cli.docs as docs_cli
@@ -69,7 +71,7 @@ def test_docs_facets_aggregates_requested_dimensions(
         ]
 
     monkeypatch.setattr(docs_cli, "create_client", fake_create_client)
-    monkeypatch.setattr(DocumentSearchAdapter, "collect_documents_sync", fake_collect)
+    monkeypatch.setattr(DocumentSearchAdapter, "iter_documents", streaming_fake(fake_collect))
 
     result = runner.invoke(
         app,
@@ -110,7 +112,7 @@ def test_docs_facets_page_scope_limits_to_single_page_budget(
         return []
 
     monkeypatch.setattr(docs_cli, "create_client", fake_create_client)
-    monkeypatch.setattr(DocumentSearchAdapter, "collect_documents_sync", fake_collect)
+    monkeypatch.setattr(DocumentSearchAdapter, "iter_documents", streaming_fake(fake_collect))
 
     result = runner.invoke(
         app,
@@ -125,7 +127,7 @@ def test_docs_facets_page_scope_limits_to_single_page_budget(
         ],
     )
     assert result.exit_code == 0
-    assert captured["search"].max_docs == 5
+    assert captured["search"].max_docs == 6  # lookahead
 
 
 def test_docs_facets_all_scope_uses_full_scan_default(
@@ -143,7 +145,7 @@ def test_docs_facets_all_scope_uses_full_scan_default(
         return []
 
     monkeypatch.setattr(docs_cli, "create_client", fake_create_client)
-    monkeypatch.setattr(DocumentSearchAdapter, "collect_documents_sync", fake_collect)
+    monkeypatch.setattr(DocumentSearchAdapter, "iter_documents", streaming_fake(fake_collect))
 
     result = runner.invoke(
         app,
@@ -152,7 +154,7 @@ def test_docs_facets_all_scope_uses_full_scan_default(
     assert result.exit_code == 0
     payload = json.loads(result.output)
     assert captured["search"].page == 1
-    assert captured["search"].max_docs == docs_cli._FACETS_ALL_MAX_DOCS
+    assert captured["search"].max_docs == docs_cli._FACETS_ALL_MAX_DOCS + 1
     assert payload["meta"]["max_docs"] is None
 
 
@@ -169,3 +171,74 @@ def test_docs_facets_rejects_invalid_scope_and_raw_true() -> None:
             ["docs", "facets", "query=invoice", "by=tags", "raw=true"],
             catch_exceptions=False,
         )
+
+
+@pytest.mark.parametrize(
+    "total,scope,complete,corpus",
+    [
+        (2, "all", True, True),
+        (3, "all", False, False),
+        (3, "page", True, False),
+    ],
+)
+def test_facets_limits_have_honest_completion(
+    monkeypatch: pytest.MonkeyPatch,
+    total: int,
+    scope: str,
+    complete: bool,
+    corpus: bool,
+) -> None:
+    seen: list[int] = []
+    closed: list[bool] = []
+
+    async def iterate(self: Any, client: Any, search: Any) -> AsyncGenerator[FakeDocument]:
+        try:
+            for i in range(total):
+                seen.append(i)
+                yield FakeDocument(i, tags=[i])
+        finally:
+            closed.append(True)
+
+    monkeypatch.setattr(
+        docs_cli,
+        "create_client",
+        lambda options: (object(), RuntimeContext(profile="test", url="unused", token="unused")),
+    )
+    monkeypatch.setattr(DocumentSearchAdapter, "iter_documents", iterate)
+    result = runner.invoke(
+        app,
+        [
+            "docs",
+            "facets",
+            "query=x",
+            "by=tags",
+            f"facet_scope={scope}",
+            "max_docs=2",
+            "page_size=2",
+            "top_values=1",
+        ],
+    )
+    assert result.exit_code == 0, result.output
+    payload = json.loads(result.output)
+    assert payload["meta"]["scanned_docs"] == 2
+    assert payload["meta"]["complete"] is complete
+    assert payload["meta"]["corpus_complete"] is corpus
+    assert payload["meta"]["values_truncated"] == {"tags": True}
+    assert seen == list(range(total)) and closed == [True]
+    assert payload["data"]["facets"] == {"tags": [{"value": 0, "count": 1}]}
+
+
+def test_facets_failure_does_not_publish_partial_counts(monkeypatch: pytest.MonkeyPatch) -> None:
+    async def iterate(self: Any, client: Any, search: Any) -> AsyncGenerator[FakeDocument]:
+        yield FakeDocument(1, tags=[1])
+        raise TimeoutError()
+
+    monkeypatch.setattr(
+        docs_cli,
+        "create_client",
+        lambda options: (object(), RuntimeContext(profile="test", url="unused", token="unused")),
+    )
+    monkeypatch.setattr(DocumentSearchAdapter, "iter_documents", iterate)
+    result = runner.invoke(app, ["docs", "facets", "query=x", "by=tags", "facet_scope=all"])
+    assert isinstance(result.exception, TimeoutError)
+    assert result.stdout == ""

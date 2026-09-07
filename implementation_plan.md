@@ -444,3 +444,21 @@ peak Python allocations drop from 19.3349 MiB (eager baseline) to 0.0429 MiB. Co
 0.1383 MiB, emitting all rows. Measurements exclude HTTP/schema, Rust allocations, and
 server-provided corpus ID metadata; README and performance docs state these limits.
 No production requests, mutations, or deployment changes were needed for this work.
+
+## 10. Retrieval Follow-Ups (2026-09-07)
+
+- [x] F1: Stream facet counters with bounded document retention, explicit scope/corpus
+  completion and truncated-value metadata; verify limits, failures, and cleanup; commit.
+- [ ] F2: Include page_count and raw OCR chars_total in discovery by default, preserve
+  IDs-only and explicit fields, distinguish unknown from zero and excerpt size; commit.
+- [ ] F3: Implement PDF page extraction for get, including max_pages alone, archive/original
+  selection, source-aware offsets, page boundaries, clear unsupported/encrypted/invalid
+  PDF failures, same-loop download cleanup, and fixture-based integration tests; commit.
+- [ ] F4: Expand discovery/get/facets help with defaults, examples, source and continuation
+  rules; update README/spec/cookbook, run full regressions and review; commit.
+
+Acceptance: no production mutations; no guessed OCR page splits or silent omission of
+requested pages. Page extraction reads PDF text layers, not a new OCR engine. JSON contains
+text once plus page-boundary metadata; text mode preserves extracted characters. Character
+limits constrain returned output, not PDF download/parser memory. Keep ordinary OCR get
+and lightweight CLI startup unchanged. Review each unit before committing.

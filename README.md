@@ -175,6 +175,13 @@ search order is server relevance order, without per-batch local re-ranking.
 
 ## Current Retrieval Limitation
 
+`docs facets query="invoice" by=tags,year facet_scope=all` counts incrementally.
+`complete` describes the requested scope (`page` by default); `corpus_complete`
+is true only when the entire query was counted from the beginning. `max_docs`
+can make either scope partial. `values_truncated` identifies dimensions limited
+by `top_values`, independently of scan completion. Facet counts are not resumable
+or safe to merge by adding top-value lists.
+
 `docs get` returns OCR-backed text (`source=ocr`) once, without duplicating it in
 document metadata. The default `max_chars=20000` bounds returned OCR text; choose a
 larger positive value explicitly when needed. `start_char` is a zero-based Unicode
