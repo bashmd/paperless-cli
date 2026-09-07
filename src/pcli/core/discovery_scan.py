@@ -22,11 +22,13 @@ async def _scan_entries(
     offset: int,
     selected_ids: list[int] | None,
     fetch_size: int,
+    continuation_size: Callable[[], int],
 ) -> AsyncGenerator[Any]:
     if selected_ids is not None:
         ids = list(dict.fromkeys(selected_ids))
         end = min(len(ids), offset + search.max_docs + 1)
-        for start in range(offset, end, fetch_size):
+        start = offset
+        while start < end:
             window = ids[start : min(start + fetch_size, end)]
             batch = replace(
                 search,
@@ -39,20 +41,35 @@ async def _scan_entries(
                 by_id = {getattr(doc, "id", None): doc async for doc in documents}
             for doc_id in window:
                 yield by_id.pop(doc_id, None)
+            start += len(window)
+            fetch_size = continuation_size()
     else:
-        skip = offset % fetch_size
-        batch = replace(
-            search,
-            page=offset // fetch_size + 1,
-            page_size=fetch_size,
-            max_docs=search.max_docs + skip + 1,
-        )
-        async with aclosing(fetch(batch)) as documents:
-            index = 0
-            async for document in documents:
-                if index >= skip:
-                    yield document
-                index += 1
+        end = offset + search.max_docs + 1
+        position = offset
+        while position < end:
+            skip = position % fetch_size
+            # A small first page favors early hits. If more scanning is needed,
+            # expand the next fetch; remap absolute positions and skip its overlap.
+            take = end - position
+            if fetch_size < continuation_size():
+                take = min(take, fetch_size - skip)
+            batch = replace(
+                search,
+                page=position // fetch_size + 1,
+                page_size=fetch_size,
+                max_docs=skip + take,
+            )
+            consumed = index = 0
+            async with aclosing(fetch(batch)) as documents:
+                async for document in documents:
+                    if index >= skip:
+                        yield document
+                        position += 1
+                        consumed += 1
+                    index += 1
+            if consumed < take:
+                return
+            fetch_size = continuation_size()
 
 
 async def scan_batch(
@@ -77,13 +94,19 @@ async def scan_batch(
     A single document lookahead distinguishes budget stops from exhaustion. Fetches
     remain page-granular; transport pages are independent of the output row limit.
     """
-    fetch_size = min(search.page_size, search.max_docs + 1, 150)
+    full_fetch_size = min(search.page_size, search.max_docs + 1, 150)
+    if max_pages is not None:
+        full_fetch_size = min(full_fetch_size, max_pages + 1)
+    fetch_size = full_fetch_size
     if max_matches is not None:
         fetch_size = min(fetch_size, max_matches + 1)
-    if max_pages is not None:
-        fetch_size = min(fetch_size, max_pages + 1)
     items: list[dict[str, Any]] = []
     count = pages_used = chars_used = docs_scanned = docs_with_hits = 0
+
+    def continuation_size() -> int:
+        if max_matches is not None and count >= max_matches:
+            return fetch_size  # Only lookahead remains; do not enlarge that request.
+        return full_fetch_size
 
     def finish(position: int, hit: int, reason: str) -> ScanResult:
         complete = reason == "exhausted"
@@ -119,7 +142,9 @@ async def scan_batch(
         return finish(position, hit, reason)
 
     position = offset
-    async with aclosing(_scan_entries(search, fetch, offset, selected_ids, fetch_size)) as entries:
+    async with aclosing(
+        _scan_entries(search, fetch, offset, selected_ids, fetch_size, continuation_size)
+    ) as entries:
         async for document in entries:
             first_hit = hit_offset if position == offset else 0
             if position - offset >= search.max_docs:

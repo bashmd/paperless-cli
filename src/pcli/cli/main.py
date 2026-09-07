@@ -131,14 +131,15 @@ def root(
 def main() -> None:
     """Run CLI app."""
     try:
-        app(standalone_mode=False)
-    except PcliError as exc:
-        typer.echo(to_json(render_error(exc.payload)))
-        raise SystemExit(int(exc.exit_code)) from exc
-    except REQUEST_ERRORS as exc:
-        error = normalize_error(exc)
-        typer.echo(to_json(render_error(error.payload)))
-        raise SystemExit(int(error.exit_code)) from exc
+        try:
+            app(standalone_mode=False)
+        except PcliError as exc:
+            typer.echo(to_json(render_error(exc.payload)))
+            raise SystemExit(int(exc.exit_code)) from exc
+        except REQUEST_ERRORS as exc:
+            error = normalize_error(exc)
+            typer.echo(to_json(render_error(error.payload)))
+            raise SystemExit(int(error.exit_code)) from exc
     except BrokenPipeError:
         # Do not print a traceback or fetch more when a downstream reader (e.g. head)
         # closes stdout. Redirect the descriptor to prevent another failure at shutdown.

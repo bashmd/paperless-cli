@@ -22,6 +22,7 @@ class StreamAPI:
     release_second: threading.Event = field(default_factory=threading.Event)
     fail_second: bool = False
     total: int = 500
+    hit_at: int | None = None
 
 
 @pytest.fixture
@@ -52,7 +53,13 @@ def stream_api() -> Iterator[StreamAPI]:
                     "previous": None,
                     "all": [],
                     "results": [
-                        {"id": i + 1, "title": f"Document {i + 1}", "content": "fixture " * 3}
+                        {
+                            "id": i + 1,
+                            "title": f"Document {i + 1}",
+                            "content": "fixture " * 3
+                            if state.hit_at is None or state.hit_at == i + 1
+                            else "unrelated",
+                        }
                         for i in range(start, min(start + size, state.total))
                     ],
                 }
@@ -170,15 +177,18 @@ def test_late_failure_is_nonzero_without_success_summary(stream_api: StreamAPI, 
     assert result.stderr == ""
 
 
-def test_broken_pipe_stops_without_traceback(stream_api: StreamAPI) -> None:
+@pytest.mark.parametrize("fail_second", [False, True])
+def test_broken_pipe_stops_without_traceback(stream_api: StreamAPI, fail_second: bool) -> None:
+    stream_api.fail_second = fail_second
     process = subprocess.Popen(
-        cli_args(stream_api, "find", "format=ndjson", "page_size=500", "max_docs=500"),
+        cli_args(stream_api, "find", "format=rg", "page_size=2", "max_docs=500"),
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
     )
     assert process.stdout is not None and process.stderr is not None
     try:
         assert process.stdout.readline()
+        assert stream_api.second_requested.wait(5)
         process.stdout.close()
         stream_api.release_second.set()
         assert process.wait(timeout=5) != 0
@@ -206,3 +216,26 @@ def test_explicit_page_maps_to_absolute_position_with_smaller_fetches(
     assert payload["data"]["items"][0]["id"] == 21
     assert payload["meta"]["complete"] is False
     assert stream_api.requests == [(11, 2)]
+
+
+def test_sparse_scan_expands_after_initial_small_fetch(stream_api: StreamAPI) -> None:
+    stream_api.release_second.set()
+    stream_api.hit_at = 400
+    result = subprocess.run(
+        cli_args(
+            stream_api,
+            "skim",
+            "format=ndjson",
+            "max_docs=500",
+            "page_size=500",
+            "stop_after_matches=1",
+        ),
+        capture_output=True,
+        text=True,
+        timeout=5,
+    )
+    assert result.returncode == 0, result.stdout + result.stderr
+    records = [json.loads(line) for line in result.stdout.splitlines()]
+    assert records[0]["doc_id"] == 400
+    assert records[-1]["meta"]["docs_scanned"] == 400
+    assert stream_api.requests == [(1, 2), (1, 150), (2, 150), (3, 150)]

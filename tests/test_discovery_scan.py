@@ -159,6 +159,34 @@ def test_selected_ids_use_bounded_reorder_windows() -> None:
     assert windows == [[2000, 1999]]
 
 
+def test_sparse_selected_scan_expands_without_changing_input_rank() -> None:
+    windows: list[int] = []
+
+    async def fetch(search: CanonicalDocumentSearch) -> AsyncGenerator[Document]:
+        ids = list(map(int, str(search.filters["id__in"]).split(",")))
+        windows.append(len(ids))
+        for i in sorted(ids):
+            yield Document(i, hits=int(i == 700))
+
+    result = asyncio.run(
+        scan_batch(
+            search=canonicalize_document_search(max_docs=500, page_size=500),
+            fetch=fetch,
+            project=lambda doc: [{"id": doc.id}] * doc.hits,
+            character_cost=lambda row: 0,
+            page_cost=lambda doc: 1,
+            command="docs.skim",
+            signature={},
+            offset=0,
+            selected_ids=list(range(1000, 0, -1)),
+            max_matches=1,
+        )
+    )
+    assert result.items == [{"id": 700}]
+    assert result.meta["docs_scanned"] == 301
+    assert windows == [2, 150, 150]
+
+
 def test_sink_failure_stops_fetching_and_closes_source() -> None:
     events: list[str] = []
 

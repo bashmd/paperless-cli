@@ -429,3 +429,10 @@ one-match budgets fetch only one two-document page, late errors never emit succe
 broken pipes stop cleanly, and logical initial pages map correctly to smaller fetch pages.
 Seventy-two resumption combinations cover query and selected-ID scans; additional tests
 change budgets/transport page sizes across resumes and check cleanup on the owning loop.
+
+Review follow-up: a small match budget now shrinks only the initial fetch. Sparse scans
+expand to regular bounded pages if the target is not met, avoiding many tiny requests;
+absolute positions skip any overlap after changing transport page size. Local HTTP
+evidence finds a sole hit at document 400 in four requests, not 200. Selected-ID tests
+verify the same expansion preserves rank. Closed stdout is also handled while reporting
+a late API failure, not only while printing successful rows.
