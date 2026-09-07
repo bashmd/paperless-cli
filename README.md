@@ -136,7 +136,7 @@ pcli get 123 format=text start_char=5000 max_chars=5000
 ## Output Modes
 
 1. `format=json`: stable envelope output for machine consumers.
-2. `format=ndjson`: `item`/`summary` records for discovery pipelines (currently batch-buffered).
+2. `format=ndjson`: streamed `item` records followed by a final `summary` for discovery pipelines.
 3. `format=rg`: ripgrep-style scan output (default for `docs find|peek|skim`).
 4. `format=text`: literal OCR text on `get`; rg-style output on discovery commands.
 

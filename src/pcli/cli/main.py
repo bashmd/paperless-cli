@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import os
+import sys
 from typing import Annotated
 
 import typer
@@ -137,5 +139,11 @@ def main() -> None:
         error = normalize_error(exc)
         typer.echo(to_json(render_error(error.payload)))
         raise SystemExit(int(error.exit_code)) from exc
+    except BrokenPipeError:
+        # Do not print a traceback or fetch more when a downstream reader (e.g. head)
+        # closes stdout. Redirect the descriptor to prevent another failure at shutdown.
+        with open(os.devnull, "w") as sink:
+            os.dup2(sink.fileno(), sys.stdout.fileno())
+        raise SystemExit(1) from None
     finally:
         close_open_clients_sync()

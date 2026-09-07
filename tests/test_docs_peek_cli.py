@@ -8,6 +8,7 @@ from dataclasses import dataclass
 from typing import Any
 
 import pytest
+from streaming_fakes import streaming_fake
 from typer.testing import CliRunner
 
 import pcli.cli.docs as docs_cli
@@ -53,7 +54,7 @@ def test_docs_peek_defaults_to_ripgrep_style_output(
         ]
 
     monkeypatch.setattr(docs_cli, "create_client", fake_create_client)
-    monkeypatch.setattr(DocumentSearchAdapter, "collect_documents_sync", fake_collect)
+    monkeypatch.setattr(DocumentSearchAdapter, "iter_documents", streaming_fake(fake_collect))
 
     result = runner.invoke(app, ["docs", "peek", "ids=2", "max_docs=1"])
     assert result.exit_code == 0
@@ -92,7 +93,7 @@ def test_docs_peek_supports_ids_and_excerpt_truncation(
         ]
 
     monkeypatch.setattr(docs_cli, "create_client", fake_create_client)
-    monkeypatch.setattr(DocumentSearchAdapter, "collect_documents_sync", fake_collect)
+    monkeypatch.setattr(DocumentSearchAdapter, "iter_documents", streaming_fake(fake_collect))
 
     result = runner.invoke(
         app,
@@ -127,7 +128,7 @@ def test_docs_peek_supports_from_stdin_ids(
         return []
 
     monkeypatch.setattr(docs_cli, "create_client", fake_create_client)
-    monkeypatch.setattr(DocumentSearchAdapter, "collect_documents_sync", fake_collect)
+    monkeypatch.setattr(DocumentSearchAdapter, "iter_documents", streaming_fake(fake_collect))
 
     stdin_payload = "\n".join(
         [
@@ -215,7 +216,7 @@ def test_docs_peek_small_max_chars_never_exceeds_limit(
         ]
 
     monkeypatch.setattr(docs_cli, "create_client", fake_create_client)
-    monkeypatch.setattr(DocumentSearchAdapter, "collect_documents_sync", fake_collect)
+    monkeypatch.setattr(DocumentSearchAdapter, "iter_documents", streaming_fake(fake_collect))
 
     result = runner.invoke(
         app,
@@ -285,7 +286,7 @@ def test_docs_peek_respects_budget_controls(
         ]
 
     monkeypatch.setattr(docs_cli, "create_client", fake_create_client)
-    monkeypatch.setattr(DocumentSearchAdapter, "collect_documents_sync", fake_collect)
+    monkeypatch.setattr(DocumentSearchAdapter, "iter_documents", streaming_fake(fake_collect))
 
     by_stop = runner.invoke(
         app,
@@ -328,7 +329,7 @@ def test_docs_peek_alias_precedence_prefers_per_doc_max_chars(
         return [FakeDocument(id=1, title="Doc", created=dt.date(2026, 1, 1), content="abcdef")]
 
     monkeypatch.setattr(docs_cli, "create_client", fake_create_client)
-    monkeypatch.setattr(DocumentSearchAdapter, "collect_documents_sync", fake_collect)
+    monkeypatch.setattr(DocumentSearchAdapter, "iter_documents", streaming_fake(fake_collect))
 
     result = runner.invoke(
         app,
@@ -381,7 +382,7 @@ def test_docs_peek_cursor_resume_returns_remaining_items(
         return documents[offset : offset + search.max_docs]
 
     monkeypatch.setattr(docs_cli, "create_client", fake_create_client)
-    monkeypatch.setattr(DocumentSearchAdapter, "collect_documents_sync", fake_collect)
+    monkeypatch.setattr(DocumentSearchAdapter, "iter_documents", streaming_fake(fake_collect))
 
     first = runner.invoke(
         app,
@@ -426,7 +427,7 @@ def test_docs_peek_cursor_mismatch_and_page_conflict_are_rejected(
         ]
 
     monkeypatch.setattr(docs_cli, "create_client", fake_create_client)
-    monkeypatch.setattr(DocumentSearchAdapter, "collect_documents_sync", fake_collect)
+    monkeypatch.setattr(DocumentSearchAdapter, "iter_documents", streaming_fake(fake_collect))
 
     first = runner.invoke(
         app,
@@ -487,7 +488,7 @@ def test_docs_peek_with_explicit_page_emits_resumable_cursor(
         ]
 
     monkeypatch.setattr(docs_cli, "create_client", fake_create_client)
-    monkeypatch.setattr(DocumentSearchAdapter, "collect_documents_sync", fake_collect)
+    monkeypatch.setattr(DocumentSearchAdapter, "iter_documents", streaming_fake(fake_collect))
 
     result = runner.invoke(
         app,

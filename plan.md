@@ -439,8 +439,8 @@ This amendment supersedes conflicting ranking, budget, and cursor rules above:
    page/character budgets, and stop-after limits may change on resumption.
 4. Summaries in every discovery format include `complete`, `stop_reason`, and
    `next_cursor`. Counts describe the current batch, not the total matching corpus.
-5. A limit is not exhaustion. A lookahead document distinguishes these cases;
-   this can fetch one document beyond the scan limit, plus an API-page prefix.
+5. A limit is not exhaustion. The iterator consumes one lookahead document to
+   distinguish these cases; network responses contain whole API pages.
 6. Selected IDs preserve first-occurrence order before limiting. Missing or
    inaccessible selected IDs advance the selector position without inventing results.
 7. Pipeline consumers reject failures, unterminated NDJSON, and incomplete input.
@@ -448,12 +448,22 @@ This amendment supersedes conflicting ranking, budget, and cursor rules above:
    the output retains `input_complete=false` and `complete=false` for partial input.
 8. Budgets too small for the next item return `BUDGET_TOO_SMALL` with the limit name.
 9. Cursors are live positions, not snapshots; concurrent edits/reindexing can change
-   ordering. Batch buffering remains; full streaming is a separate follow-up.
-10. `get` defaults to `max_chars=20000`, accepts a zero-based raw OCR `start_char`,
+   ordering. Discovery scans now consume bounded API pages; rg/NDJSON emit each row immediately,
+   while JSON buffers only output rows. Transport page size is at most 150 and can shrink for
+   per-call budgets; `page_size` remains the output row limit and logical initial-page size.
+   Cursors retain absolute document/hit positions regardless of transport page size.
+10. Selected-ID document bodies use bounded reorder windows, preserving input priority.
+   Stdin is read line-by-line but its ID selection is validated to EOF before fetching;
+   this intentionally prevents failed producers from becoming successful downstream scans.
+11. Lookahead may read the next API page to distinguish exhaustion from a budget stop.
+   RG/NDJSON rows are provisional until the final summary; a late failure exits nonzero,
+   with a typed NDJSON error (or the normal error envelope for rg), and no success summary.
+   Broken output pipes stop fetching, close the client, and exit nonzero without a traceback.
+12. `get` defaults to `max_chars=20000`, accepts a zero-based raw OCR `start_char`,
     and exposes `next_start` for subsequent chunks. Metadata excludes duplicate
     `content`; `data.text` is the only OCR payload. `format=text` emits literal text
     on stdout, with truncation information on stderr. JSON retains structured bounds.
-11. Standalone `max_pages` fails explicitly until page extraction exists. Character
+13. Standalone `max_pages` fails explicitly until page extraction exists. Character
     limits bound returned text, not API download size. Raw OCR offsets differ from
     normalized skim offsets; neither cursor nor chunk retrieval is a snapshot.
 

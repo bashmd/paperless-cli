@@ -3,9 +3,9 @@
 from __future__ import annotations
 
 import asyncio
-from collections.abc import AsyncIterator
-from contextlib import AbstractAsyncContextManager
-from typing import Any, Protocol
+from collections.abc import AsyncGenerator, AsyncIterator
+from contextlib import AbstractAsyncContextManager, aclosing
+from typing import Any, Protocol, cast
 
 from pcli.models.discovery import CanonicalDocumentSearch, FilterValue
 
@@ -31,7 +31,7 @@ class DocumentSearchAdapter:
         self,
         client: _PaperlessDiscoveryClientProtocol,
         search: CanonicalDocumentSearch,
-    ) -> AsyncIterator[Any]:
+    ) -> AsyncGenerator[Any]:
         """Iterate matching documents using canonical query/filter params."""
         if not client.is_initialized:
             await client.initialize()
@@ -39,11 +39,14 @@ class DocumentSearchAdapter:
         params = search.to_reduce_params()
         yielded = 0
         async with client.documents.reduce(**params):
-            async for item in client.documents:
-                yield item
-                yielded += 1
-                if yielded >= search.max_docs:
-                    break
+            # pypaperless implements __aiter__ as an async generator. Close it before
+            # the owning loop exits, including on early budgets and broken pipes.
+            async with aclosing(cast(AsyncGenerator[Any], aiter(client.documents))) as documents:
+                async for item in documents:
+                    yield item
+                    yielded += 1
+                    if yielded >= search.max_docs:
+                        break
 
     async def collect_documents(
         self,

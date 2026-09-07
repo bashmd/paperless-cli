@@ -17,6 +17,7 @@ import typer
 
 from pcli.adapters.client import create_client
 from pcli.adapters.document_search import DocumentSearchAdapter
+from pcli.adapters.errors import REQUEST_ERRORS, normalize_error
 from pcli.adapters.resource_handler import (
     apply_mutation_fields,
     coerce_mutation_fields,
@@ -29,7 +30,7 @@ from pcli.core.cursor import decode_cursor
 from pcli.core.discovery_scan import ScanResult, scan_batch
 from pcli.core.errors import PcliError, UsageValidationError
 from pcli.core.options import FormatMode, GlobalOptions, parse_bool, parse_scalar
-from pcli.core.output import ndjson_item, to_json
+from pcli.core.output import ndjson_error, ndjson_item, to_json
 from pcli.core.page_spec import normalize_page_selection
 from pcli.core.parsing import parse_tokens
 from pcli.core.retrieval_source import parse_retrieval_source, resolve_source_candidates
@@ -551,13 +552,10 @@ def _read_stdin_ids(*, allow_partial: bool = False) -> tuple[list[int], bool]:
             return parsed if parsed > 0 else None
         return None
 
-    payload = sys.stdin.read()
-    if not payload.strip():
-        return [], True
     ids: list[int] = []
     framed = summary_seen = False
     complete = True
-    for line in payload.splitlines():
+    for line in sys.stdin:
         token = line.strip()
         if not token:
             continue
@@ -739,6 +737,47 @@ def _resolve_cursor_offset(
     return state.offset
 
 
+def _emit_scan_row(
+    row: dict[str, Any], *, action: str, mode: FormatMode, ids_only: bool = False
+) -> None:
+    if mode is FormatMode.NDJSON:
+        typer.echo(ndjson_item(row))
+    elif action == "skim":
+        for line in _rg_skim_lines(row):
+            typer.echo(line)
+    else:
+        typer.echo(
+            _rg_find_line(row, ids_only=ids_only) if action == "find" else _rg_peek_line(row)
+        )
+
+
+def _run_discovery_scan(
+    *, client: Any, mode: FormatMode, ids_only: bool = False, **kwargs: Any
+) -> ScanResult:
+    async def run() -> ScanResult:
+        try:
+            return await scan_batch(
+                **kwargs,
+                emit=None
+                if mode is FormatMode.JSON
+                else lambda row: _emit_scan_row(
+                    row, action=kwargs["command"].split(".")[-1], mode=mode, ids_only=ids_only
+                ),
+            )
+        finally:
+            if hasattr(client, "close"):
+                await client.close()
+
+    try:
+        return asyncio.run(run())
+    except (PcliError, *REQUEST_ERRORS) as exc:
+        if mode is not FormatMode.NDJSON:
+            raise
+        error = exc if isinstance(exc, PcliError) else normalize_error(exc)
+        typer.echo(ndjson_error(error.payload))
+        raise SystemExit(int(error.exit_code)) from exc
+
+
 def _emit_scan_result(
     result: ScanResult,
     *,
@@ -760,16 +799,8 @@ def _emit_scan_result(
         typer.echo(to_json({"type": "summary", "meta": meta}))
     elif mode in (FormatMode.RG, FormatMode.TEXT):
         for row in result.items:
-            if action == "skim":
-                for line in _rg_skim_lines(row):
-                    typer.echo(line)
-            else:
-                typer.echo(
-                    _rg_find_line(row, ids_only=ids_only)
-                    if action == "find"
-                    else _rg_peek_line(row)
-                )
-        if action == "skim" and result.items:
+            _emit_scan_row(row, action=action, mode=mode, ids_only=ids_only)
+        if action == "skim" and result.meta.get("count", 0):
             typer.echo("--")
         typer.echo(_rg_summary_line(**meta))
     else:
@@ -2345,9 +2376,12 @@ def docs_find(
 
     client, runtime_context = create_client(global_options)
     adapter = DocumentSearchAdapter()
-    result = scan_batch(
+    result = _run_discovery_scan(
+        client=client,
+        mode=global_options.format_mode,
         search=search,
-        fetch=lambda batch: adapter.collect_documents_sync(client, batch),
+        fetch=lambda batch: adapter.iter_documents(client, batch),
+        ids_only=ids_only,
         project=lambda doc: (
             [{"id": getattr(doc, "id", None)}]
             if ids_only
@@ -2530,9 +2564,11 @@ def docs_peek(
 
     client, runtime_context = create_client(global_options)
     adapter = DocumentSearchAdapter()
-    result = scan_batch(
+    result = _run_discovery_scan(
+        client=client,
+        mode=global_options.format_mode,
         search=search,
-        fetch=lambda batch: adapter.collect_documents_sync(client, batch),
+        fetch=lambda batch: adapter.iter_documents(client, batch),
         project=lambda doc: [_project_peek_document(doc, fields, max_chars=per_doc_max_chars)],
         character_cost=lambda row: int(row["chars"]),
         page_cost=_document_page_cost,
@@ -2723,9 +2759,11 @@ def docs_skim(
     client, runtime_context = create_client(global_options)
     adapter = DocumentSearchAdapter()
     pattern = re.compile(re.escape(search.query or ""), re.IGNORECASE)
-    result = scan_batch(
+    result = _run_discovery_scan(
+        client=client,
+        mode=global_options.format_mode,
         search=search,
-        fetch=lambda batch: adapter.collect_documents_sync(client, batch),
+        fetch=lambda batch: adapter.iter_documents(client, batch),
         project=lambda doc: _extract_skim_hits(
             doc,
             query=search.query or "",

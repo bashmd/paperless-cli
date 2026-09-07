@@ -8,6 +8,7 @@ from dataclasses import dataclass
 from typing import Any
 
 import pytest
+from streaming_fakes import streaming_fake
 from typer.testing import CliRunner
 
 import pcli.cli.docs as docs_cli
@@ -50,7 +51,7 @@ def test_docs_skim_defaults_to_ripgrep_style_output(
         ]
 
     monkeypatch.setattr(docs_cli, "create_client", fake_create_client)
-    monkeypatch.setattr(DocumentSearchAdapter, "collect_documents_sync", fake_collect)
+    monkeypatch.setattr(DocumentSearchAdapter, "iter_documents", streaming_fake(fake_collect))
 
     result = runner.invoke(app, ["docs", "skim", "query=invoice", "max_docs=1"])
     assert result.exit_code == 0
@@ -78,7 +79,7 @@ def test_docs_skim_extracts_hits_with_context(
         ]
 
     monkeypatch.setattr(docs_cli, "create_client", fake_create_client)
-    monkeypatch.setattr(DocumentSearchAdapter, "collect_documents_sync", fake_collect)
+    monkeypatch.setattr(DocumentSearchAdapter, "iter_documents", streaming_fake(fake_collect))
 
     result = runner.invoke(
         app,
@@ -125,7 +126,7 @@ def test_docs_skim_limits_hits_per_doc_and_applies_ids_filter(
         ]
 
     monkeypatch.setattr(docs_cli, "create_client", fake_create_client)
-    monkeypatch.setattr(DocumentSearchAdapter, "collect_documents_sync", fake_collect)
+    monkeypatch.setattr(DocumentSearchAdapter, "iter_documents", streaming_fake(fake_collect))
 
     result = runner.invoke(
         app,
@@ -153,7 +154,7 @@ def test_docs_skim_supports_from_stdin_ids(
         return []
 
     monkeypatch.setattr(docs_cli, "create_client", fake_create_client)
-    monkeypatch.setattr(DocumentSearchAdapter, "collect_documents_sync", fake_collect)
+    monkeypatch.setattr(DocumentSearchAdapter, "iter_documents", streaming_fake(fake_collect))
 
     result = runner.invoke(
         app,
@@ -199,7 +200,7 @@ def test_docs_skim_uses_trimmed_query_for_local_hit_extraction(
         return [FakeDocument(id=1, content="invoice", created=dt.date(2026, 1, 1))]
 
     monkeypatch.setattr(docs_cli, "create_client", fake_create_client)
-    monkeypatch.setattr(DocumentSearchAdapter, "collect_documents_sync", fake_collect)
+    monkeypatch.setattr(DocumentSearchAdapter, "iter_documents", streaming_fake(fake_collect))
 
     result = runner.invoke(app, ["docs", "skim", "format=json", "query=  invoice  "])
     assert result.exit_code == 0
@@ -249,7 +250,7 @@ def test_docs_skim_respects_budget_controls(
         ]
 
     monkeypatch.setattr(docs_cli, "create_client", fake_create_client)
-    monkeypatch.setattr(DocumentSearchAdapter, "collect_documents_sync", fake_collect)
+    monkeypatch.setattr(DocumentSearchAdapter, "iter_documents", streaming_fake(fake_collect))
 
     by_stop = runner.invoke(
         app,
@@ -305,7 +306,7 @@ def test_docs_skim_cursor_resume_returns_remaining_items(
         return documents[offset : offset + search.max_docs]
 
     monkeypatch.setattr(docs_cli, "create_client", fake_create_client)
-    monkeypatch.setattr(DocumentSearchAdapter, "collect_documents_sync", fake_collect)
+    monkeypatch.setattr(DocumentSearchAdapter, "iter_documents", streaming_fake(fake_collect))
 
     first = runner.invoke(
         app,
@@ -347,7 +348,7 @@ def test_docs_skim_cursor_mismatch_and_page_conflict_are_rejected(
         return [FakeDocument(id=1, content="invoice one invoice two", created=dt.date(2026, 1, 1))]
 
     monkeypatch.setattr(docs_cli, "create_client", fake_create_client)
-    monkeypatch.setattr(DocumentSearchAdapter, "collect_documents_sync", fake_collect)
+    monkeypatch.setattr(DocumentSearchAdapter, "iter_documents", streaming_fake(fake_collect))
 
     first = runner.invoke(
         app,
@@ -395,7 +396,7 @@ def test_docs_skim_with_explicit_page_emits_resumable_cursor(
         ]
 
     monkeypatch.setattr(docs_cli, "create_client", fake_create_client)
-    monkeypatch.setattr(DocumentSearchAdapter, "collect_documents_sync", fake_collect)
+    monkeypatch.setattr(DocumentSearchAdapter, "iter_documents", streaming_fake(fake_collect))
 
     result = runner.invoke(
         app,

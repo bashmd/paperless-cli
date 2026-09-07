@@ -8,6 +8,7 @@ from dataclasses import dataclass
 from typing import Any
 
 import pytest
+from streaming_fakes import streaming_fake
 from typer.testing import CliRunner
 
 import pcli.cli.docs as docs_cli
@@ -61,7 +62,7 @@ def test_docs_find_defaults_to_ripgrep_style_output(
         ]
 
     monkeypatch.setattr(docs_cli, "create_client", fake_create_client)
-    monkeypatch.setattr(DocumentSearchAdapter, "collect_documents_sync", fake_collect)
+    monkeypatch.setattr(DocumentSearchAdapter, "iter_documents", streaming_fake(fake_collect))
 
     result = runner.invoke(app, ["docs", "find", "query=invoice", "max_docs=1"])
     assert result.exit_code == 0
@@ -102,7 +103,7 @@ def test_docs_find_preserves_server_order_in_projected_rows(
         ]
 
     monkeypatch.setattr(docs_cli, "create_client", fake_create_client)
-    monkeypatch.setattr(DocumentSearchAdapter, "collect_documents_sync", fake_collect)
+    monkeypatch.setattr(DocumentSearchAdapter, "iter_documents", streaming_fake(fake_collect))
 
     result = runner.invoke(
         app,
@@ -153,7 +154,7 @@ def test_docs_find_supports_long_option_style(
         return []
 
     monkeypatch.setattr(docs_cli, "create_client", fake_create_client)
-    monkeypatch.setattr(DocumentSearchAdapter, "collect_documents_sync", fake_collect)
+    monkeypatch.setattr(DocumentSearchAdapter, "iter_documents", streaming_fake(fake_collect))
 
     result = runner.invoke(
         app,
@@ -193,7 +194,7 @@ def test_docs_find_honors_explicit_sort_without_local_resort(
         ]
 
     monkeypatch.setattr(docs_cli, "create_client", fake_create_client)
-    monkeypatch.setattr(DocumentSearchAdapter, "collect_documents_sync", fake_collect)
+    monkeypatch.setattr(DocumentSearchAdapter, "iter_documents", streaming_fake(fake_collect))
 
     result = runner.invoke(
         app,
@@ -240,7 +241,7 @@ def test_docs_find_ids_only_mode_emits_id_rows(
         ]
 
     monkeypatch.setattr(docs_cli, "create_client", fake_create_client)
-    monkeypatch.setattr(DocumentSearchAdapter, "collect_documents_sync", fake_collect)
+    monkeypatch.setattr(DocumentSearchAdapter, "iter_documents", streaming_fake(fake_collect))
 
     result = runner.invoke(
         app,
@@ -279,7 +280,7 @@ def test_docs_find_ids_only_mode_emits_chainable_ndjson(
         ]
 
     monkeypatch.setattr(docs_cli, "create_client", fake_create_client)
-    monkeypatch.setattr(DocumentSearchAdapter, "collect_documents_sync", fake_collect)
+    monkeypatch.setattr(DocumentSearchAdapter, "iter_documents", streaming_fake(fake_collect))
 
     result = runner.invoke(
         app,
@@ -330,7 +331,7 @@ def test_docs_find_respects_budget_controls(
         ]
 
     monkeypatch.setattr(docs_cli, "create_client", fake_create_client)
-    monkeypatch.setattr(DocumentSearchAdapter, "collect_documents_sync", fake_collect)
+    monkeypatch.setattr(DocumentSearchAdapter, "iter_documents", streaming_fake(fake_collect))
 
     by_stop = runner.invoke(
         app,
@@ -380,7 +381,7 @@ def test_docs_find_alias_precedence_prefers_max_docs_over_top(
         return docs[: search.max_docs]
 
     monkeypatch.setattr(docs_cli, "create_client", fake_create_client)
-    monkeypatch.setattr(DocumentSearchAdapter, "collect_documents_sync", fake_collect)
+    monkeypatch.setattr(DocumentSearchAdapter, "iter_documents", streaming_fake(fake_collect))
     result = runner.invoke(
         app,
         [
@@ -419,7 +420,7 @@ def test_docs_find_cursor_resume_in_ndjson_mode(
         return documents[offset : offset + search.max_docs]
 
     monkeypatch.setattr(docs_cli, "create_client", fake_create_client)
-    monkeypatch.setattr(DocumentSearchAdapter, "collect_documents_sync", fake_collect)
+    monkeypatch.setattr(DocumentSearchAdapter, "iter_documents", streaming_fake(fake_collect))
 
     first = runner.invoke(
         app,
@@ -475,7 +476,7 @@ def test_docs_find_cursor_mismatch_and_page_conflict_are_rejected(
         ]
 
     monkeypatch.setattr(docs_cli, "create_client", fake_create_client)
-    monkeypatch.setattr(DocumentSearchAdapter, "collect_documents_sync", fake_collect)
+    monkeypatch.setattr(DocumentSearchAdapter, "iter_documents", streaming_fake(fake_collect))
 
     first = runner.invoke(
         app,
@@ -532,7 +533,7 @@ def test_docs_find_with_explicit_page_emits_resumable_cursor(
         ]
 
     monkeypatch.setattr(docs_cli, "create_client", fake_create_client)
-    monkeypatch.setattr(DocumentSearchAdapter, "collect_documents_sync", fake_collect)
+    monkeypatch.setattr(DocumentSearchAdapter, "iter_documents", streaming_fake(fake_collect))
 
     result = runner.invoke(
         app,

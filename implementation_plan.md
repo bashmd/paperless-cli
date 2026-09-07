@@ -407,3 +407,25 @@ wire, and producer-error propagation. Thirty-six scan-resumption combinations ex
 API-page boundaries and match/character/page budgets without dropped or repeated hits.
 OCR chunk reconstruction and literal comparison/markup rendering are tested. Four fix
 commits complete the audit units; no production mutations or deployment changes were made.
+
+## 9. Streaming Discovery (2026-09-07)
+
+- [x] S1: Incremental scan engine, bounded selected-ID reorder windows, same-loop cleanup,
+  and immediate rg/NDJSON output. Preserve positional cursors and all budget semantics.
+- [x] S2: Verify early output, bounded fetching/retention, late failures, cleanup, and cursor
+  resumption using synthetic sources and a local HTTP server; review and commit the unit.
+- [ ] S3: Replace the serialization-only memory benchmark with a real scan benchmark,
+  document measured results and streaming limits, run all checks, and commit.
+
+Acceptance: output precedes later-page responses; early budgets do not fetch the full scan;
+rg/NDJSON retain no output list; selected document bodies are buffered only in bounded
+windows; failures never emit a successful summary. JSON remains a bounded result envelope.
+Validate stdin selector completion before fetching documents, retaining only IDs, not raw
+input text. No production mutations or deployment changes.
+
+S1/S2 acceptance evidence: 348 tests pass; Ruff and mypy pass. Six subprocess tests prove
+first output arrives while the second API response is blocked. Local HTTP tests verify
+one-match budgets fetch only one two-document page, late errors never emit success,
+broken pipes stop cleanly, and logical initial pages map correctly to smaller fetch pages.
+Seventy-two resumption combinations cover query and selected-ID scans; additional tests
+change budgets/transport page sizes across resumes and check cleanup on the owning loop.
