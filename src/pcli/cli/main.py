@@ -15,6 +15,7 @@ from pcli.cli.auth import app as auth_app
 from pcli.cli.crud_resources import CRUD_RESOURCE_SPECS, build_crud_resource_app
 from pcli.cli.docs import app as docs_app
 from pcli.cli.docs import docs_get
+from pcli.cli.help_text import GET_HELP
 from pcli.cli.install import install_command
 from pcli.cli.readonly_resources import READ_ONLY_RESOURCE_SPECS, build_readonly_resource_app
 from pcli.cli.singleton_resources import SINGLETON_RESOURCE_SPECS, build_singleton_resource_app
@@ -67,6 +68,7 @@ app.add_typer(tasks_app, name="tasks")
 
 @app.command(
     "get",
+    epilog=GET_HELP,
     context_settings={"allow_extra_args": True, "ignore_unknown_options": True},
 )
 def get_alias(
@@ -78,7 +80,7 @@ def get_alias(
     tokens: Annotated[
         list[str] | None,
         typer.Argument(
-            help="max_chars=20000 start_char=0 format=json|text (OCR character offsets)."
+            help="pages=SPEC max_pages=N source=auto max_chars=20000 start_char=0 format=json|text."
         ),
     ] = None,
 ) -> None:

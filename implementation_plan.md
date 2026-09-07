@@ -454,7 +454,7 @@ No production requests, mutations, or deployment changes were needed for this wo
 - [x] F3: Implement PDF page extraction for get, including max_pages alone, archive/original
   selection, source-aware offsets, page boundaries, clear unsupported/encrypted/invalid
   PDF failures, same-loop download cleanup, and fixture-based integration tests; commit.
-- [ ] F4: Expand discovery/get/facets help with defaults, examples, source and continuation
+- [x] F4: Expand discovery/get/facets help with defaults, examples, source and continuation
   rules; update README/spec/cookbook, run full regressions and review; commit.
 
 Acceptance: no production mutations; no guessed OCR page splits or silent omission of
@@ -468,3 +468,10 @@ noncontiguous pages, empty layers, malformed/encrypted files, out-of-range pages
 and bounded chunks. Local HTTP tests exercise real metadata/download calls, original
 selection, archive 404 fallback, and permission failures without fallback. All get
 requests and cleanup share one event loop; pypdf is imported only on PDF extraction.
+
+Final follow-up acceptance: 380 tests pass; Ruff and strict mypy pass. Six command-help
+tests verify copyable options/defaults/examples; a subprocess verifies PDF code is not
+loaded at CLI startup. The updated agent skill validates. Discovery benchmarks remain
+within gates (10k documents: find 54 ms, peek 60 ms, skim 88 ms); 250k streamed rows
+complete at 0.1453 MiB peak traced Python allocation. Each unit was reviewed and committed.
+All API tests used localhost fixtures; no production requests or mutations were made.

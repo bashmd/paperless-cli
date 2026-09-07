@@ -60,7 +60,8 @@ scanner; it is not a supported CLI mode or a checkout of the old implementation.
 
 ### Measurements (2026-09-07)
 
-Python 3.12, Rust normalizer enabled, one synthetic hit per document:
+Python 3.12, Rust normalizer enabled, one synthetic hit per document. These historical
+measurements predate the additional size-hint fields in each hit:
 
 | Workload | Bodies fetched | API-sized pages | Peak Python allocation | First row |
 | --- | ---: | ---: | ---: | ---: |
@@ -80,7 +81,8 @@ latency estimate. Python tracing also does not measure Rust allocations or total
 ### Streaming Boundaries
 
 - `find`, `peek`, and `skim` stream rg/NDJSON rows immediately; JSON retains only the
-  bounded output rows. Other listing and facet commands are unchanged.
+  bounded output rows. Facets aggregate incrementally, retaining counters proportional
+  to distinct facet values rather than OCR bodies; ordinary listing commands are unchanged.
 - Transport pages contain at most 150 documents, reduced for tighter document/page
   budgets. A small hit budget reduces the initial fetch, but sparse scans expand to
   regular-sized pages when more hits are needed. A size change can refetch an
@@ -103,3 +105,13 @@ latency estimate. Python tracing also does not measure Rust allocations or total
 and subprocess stdout against a local server. It blocks page two until the first
 row is observed, verifies early-stop request counts, injects late HTTP errors, and
 checks cleanup when the downstream reader closes its pipe.
+
+### Follow-Up Validation
+
+After adding document size hints, streamed facet counters, PDF retrieval, and expanded
+help (2026-09-07): the 10,000-document/2,500-character projection benchmark records
+find 0.053968 s, peek 0.059519 s, and skim 0.087674 s (30,000 hits), median of three runs.
+These microbenchmarks use their existing explicit projection fields; skim includes
+the new size fields. The 250,000-row stream emits 85,139,104 bytes with a 0.1453 MiB
+peak Python allocation and complete=true. All existing regression gates pass.
+PDF parsing is lazy-loaded and is not part of discovery or these benchmarks.

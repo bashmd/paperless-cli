@@ -227,7 +227,7 @@ noncontiguous selections. Text mode reports truncation and empty pages on stderr
 
 The complete file is downloaded and the selected pages are parsed before text is
 returned. Page/character bounds are not download-byte or parser-memory limits.
-Selections expanding beyond 100,000 pages are rejected; use a narrower range or cap.
+Explicit page specifications expanding beyond 100,000 pages are rejected; narrow the range or cap.
 
 ## Optional Rust Acceleration
 

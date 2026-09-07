@@ -13,7 +13,7 @@ Switch profiles when you manage multiple Paperless instances:
 
 ```bash
 pcli auth list
-pcli auth switch profile=default
+pcli auth switch default
 ```
 
 ## 2. LLM Discovery Pipelines
@@ -47,16 +47,19 @@ pcli docs find query="contracts" page_size=100 cursor=<next_cursor_token>
 
 ## 3. Deep Retrieval
 
-Get full OCR text:
+Get bounded OCR text (20,000 characters by default):
 
 ```bash
 pcli get 123
+pcli get 123 format=text max_chars=5000
+pcli get 123 format=text start_char=5000 max_chars=5000
 ```
 
 Restrict to specific pages with a max page cap:
 
 ```bash
 pcli get 123 pages=1-3,5 max_pages=2
+pcli get 123 max_pages=5 format=text
 ```
 
 Force retrieval source:
@@ -64,6 +67,31 @@ Force retrieval source:
 ```bash
 pcli docs get 123 source=archive pages=2-4
 ```
+
+PDF page text and OCR text have different character offsets. JSON `next_start`
+resumes within the same source and page selection; `page_spans` locates selected
+pages in that text. `pages_truncated` reports page caps independently of character
+truncation. `empty_pages` can indicate blank or image-only pages; extraction does
+not run OCR. Invalid pages and unsupported files fail instead of being omitted.
+
+Use size hints before full retrieval:
+
+```bash
+pcli docs find query="insurance" fields=id,title,page_count,chars_total
+pcli docs peek ids=123,456 per_doc_max_chars=500
+```
+
+Count across the query, not just the first result page:
+
+```bash
+pcli docs facets query="invoice" by=tags,year facet_scope=all
+pcli docs facets query="invoice" by=tags facet_scope=all max_docs=1000
+```
+
+Check `corpus_complete` before treating counts as corpus totals. `complete` describes
+the requested facet scope, and `values_truncated` describes the top-value list cap.
+Do not add partial top-value lists to estimate full totals. For exact defaults and
+continuation rules, use `pcli docs skim --help` or `pcli get --help`.
 
 ## 4. Document Operations
 

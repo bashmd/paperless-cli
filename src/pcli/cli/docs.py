@@ -25,6 +25,7 @@ from pcli.adapters.resource_handler import (
     require_confirmation,
     resolve_only_changed,
 )
+from pcli.cli.help_text import FACETS_HELP, FIND_HELP, GET_HELP, PEEK_HELP, SKIM_HELP
 from pcli.cli.io import emit_success
 from pcli.core.cursor import decode_cursor
 from pcli.core.discovery_scan import ScanResult, scan_batch
@@ -886,10 +887,6 @@ async def _fetch_document(client: Any, document_id: int) -> Any:
     if not getattr(client, "is_initialized", False) and hasattr(client, "initialize"):
         await client.initialize()
     return await client.documents(document_id)
-
-
-def _fetch_document_sync(client: Any, document_id: int) -> Any:
-    return asyncio.run(_fetch_document(client, document_id))
 
 
 async def _fetch_document_metadata(client: Any, document_id: int) -> Any:
@@ -2027,6 +2024,7 @@ def _retrieve_text_sync(
 
 @app.command(
     "get",
+    epilog=GET_HELP,
     context_settings={"allow_extra_args": True, "ignore_unknown_options": True},
 )
 def docs_get(
@@ -2040,7 +2038,7 @@ def docs_get(
         typer.Argument(help="Global options."),
     ] = None,
 ) -> None:
-    """Read OCR text: max_chars=20000 start_char=0 format=json|text."""
+    """Read bounded OCR text or selected PDF pages with document metadata."""
     raw_tokens = [*(tokens or []), *ctx.args]
     parsed = parse_tokens(
         raw_tokens,
@@ -2383,6 +2381,7 @@ def docs_more_like(
 
 @app.command(
     "find",
+    epilog=FIND_HELP,
     context_settings={"allow_extra_args": True, "ignore_unknown_options": True},
 )
 def docs_find(
@@ -2511,6 +2510,7 @@ def docs_find(
 
 @app.command(
     "peek",
+    epilog=PEEK_HELP,
     context_settings={"allow_extra_args": True, "ignore_unknown_options": True},
 )
 def docs_peek(
@@ -2695,6 +2695,7 @@ def docs_peek(
 
 @app.command(
     "skim",
+    epilog=SKIM_HELP,
     context_settings={"allow_extra_args": True, "ignore_unknown_options": True},
 )
 def docs_skim(
@@ -2899,6 +2900,7 @@ def docs_skim(
 
 @app.command(
     "facets",
+    epilog=FACETS_HELP,
     context_settings={"allow_extra_args": True, "ignore_unknown_options": True},
 )
 def docs_facets(

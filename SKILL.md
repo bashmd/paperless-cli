@@ -1,3 +1,8 @@
+---
+name: paperless-cli
+description: Find and read Paperless documents with pcli using efficient grep-like discovery, bounded previews, and targeted OCR or PDF retrieval.
+---
+
 # pcli Discovery Skill (rg-first)
 
 Use this when your goal is: find relevant documents fast, skim massive corpora, then deep-read only the best IDs.
@@ -24,7 +29,11 @@ Use this when your goal is: find relevant documents fast, skim massive corpora, 
 For the next raw OCR chunk, use `start_char=5000 max_chars=5000`. JSON mode gives
 `next_start` explicitly; text mode warns on stderr when more text remains. The
 default bound is 20,000 OCR characters. Do not use skim's normalized hit offsets as
-raw `get` offsets. True page extraction is not available yet.
+raw `get` offsets. For actual PDF pages use `pcli get <id> pages=1,3-5` or
+`max_pages=5`. Auto prefers the archive, then the original PDF. PDF offsets refer
+to the selected pages joined with newline/form-feed/newline, not Paperless OCR.
+Keep source/selection unchanged on chunk resumes; JSON `page_spans` gives page bounds.
+`empty_pages` means no extracted text, not proof of blank pages. No new OCR is run.
 
 ## 3. Efficient Knobs
 
@@ -36,6 +45,11 @@ Use these early to control cost:
 4. `max_hits_per_doc` (`skim`): prevent hit explosion.
 5. `max_chars_total`, `max_pages_total`: global budget caps.
 6. `stop_after_matches`: stop once enough evidence is found.
+
+Use default `page_count` and raw OCR `chars_total` hints to decide whether to read
+fully. Unknown sizes are null/-; peek `chars` is only excerpt size. Skim performs
+case-insensitive literal matching, not regex; context bounds count characters,
+not lines. Its query also filters candidates on the server, even with selected IDs.
 
 ## 4. Pipelining Rules
 
@@ -51,6 +65,8 @@ Use these early to control cost:
 3. `skim`: header line `doc_id:page:start-end <hit>`, indented context line, optional `--`, then `# summary ...`
 
 Treat `# summary` as end-of-batch metadata (`next_cursor`, counts, budgets consumed).
+Rows stream before completion; a missing summary or failed exit means the result
+cannot be treated as a successfully completed batch.
 
 Check `complete` and `stop_reason`: limits do not mean exhaustion. Resume with the
 same query/fields/page size and `cursor=...` (without `page`); per-call budgets can
@@ -66,6 +82,10 @@ anything cannot supply an error record.
 2. Use `peek` when deciding which docs are worth full retrieval.
 3. Use `skim` when you need exact evidence snippets across many docs.
 4. Only call `get` once you already have high-confidence IDs.
+
+For corpus counts use `docs facets query=... by=tags,year facet_scope=all` and check
+`corpus_complete`. Its default scope is only one page; `values_truncated` reports
+top-value caps. Partial top-value lists cannot be summed into reliable corpus totals.
 
 ## 7. Safety Notes
 
