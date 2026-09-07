@@ -134,7 +134,7 @@ def test_docs_find_preserves_server_order_in_projected_rows(
 
     search = captured["search"]
     assert search.max_docs == 3  # one lookahead document
-    assert search.filters["document_type"] == "7"
+    assert search.filters["document_type__id__in"] == "7"
     assert search.filters["correspondent__id"] == "2"
     assert search.sort == "-score,id"
 

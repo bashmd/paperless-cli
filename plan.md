@@ -487,6 +487,9 @@ This amendment supersedes conflicting ranking, budget, and cursor rules above:
 17. Facets retain counters, not document bodies. complete describes the requested
     facet_scope; corpus_complete requires an exhausted scan from the beginning.
     values_truncated reports top_values caps independently. Counts are not resumable.
+18. The discovery doc_type alias maps to document_type__id__in, supporting a single
+    ID or comma-separated IDs (either type). Mutation fields and facet dimensions
+    still use document_type; they are not query-parameter aliases.
 
 ## 9. Management Contract by Resource
 

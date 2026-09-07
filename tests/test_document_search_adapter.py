@@ -70,7 +70,7 @@ def test_iter_documents_initializes_client_and_applies_reduce_params() -> None:
             "page": 1,
             "page_size": 150,
             "query": "invoices",
-            "document_type": "7,8",
+            "document_type__id__in": "7,8",
             "tag__id": 4,
         }
     ]

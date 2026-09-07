@@ -159,6 +159,22 @@ def test_sort_reaches_real_dependency_request(local_api: tuple[str, list[str]]) 
     assert "sort" not in params
 
 
+@pytest.mark.parametrize("doc_type", ["7", "7,8"])
+def test_document_type_alias_is_an_id_filter_on_wire(
+    local_api: tuple[str, list[str]],
+    doc_type: str,
+) -> None:
+    url, requests = local_api
+    result = run_cli(
+        "docs", "find", "query=fixture", f"doc_type={doc_type}", f"url={url}", "token=test"
+    )
+    assert result.returncode == 0, result.stdout + result.stderr
+    request = next(path for path in requests if path.startswith("/api/documents/"))
+    params = parse_qs(urlsplit(request).query)
+    assert params["document_type__id__in"] == [doc_type]
+    assert "document_type" not in params
+
+
 @pytest.mark.parametrize(("status", "exit_code"), [(401, 3), (403, 5), (404, 4), (500, 6)])
 def test_mutation_does_not_disguise_transport_failures(
     local_api: tuple[str, list[str]],

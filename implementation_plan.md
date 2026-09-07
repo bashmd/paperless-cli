@@ -475,3 +475,23 @@ loaded at CLI startup. The updated agent skill validates. Discovery benchmarks r
 within gates (10k documents: find 54 ms, peek 60 ms, skim 88 ms); 250k streamed rows
 complete at 0.1453 MiB peak traced Python allocation. Each unit was reviewed and committed.
 All API tests used localhost fixtures; no production requests or mutations were made.
+
+## 11. Help-Only Onboarding Pass (2026-09-07)
+
+- [x] H1: Verify tag/date recipes against Paperless 2.20.10 filter definitions and
+  actual dependency wire requests; fix the discovered doc_type ID-filter alias; commit.
+- [ ] H2: Explain find/peek/skim/get versus list/search at docs entry; repair auth/docs
+  paragraph formatting; add a concise topic+tag+date recipe with lookup and boundaries.
+- [ ] H3: Exercise the documented commands against a local decoy-filled fixture,
+  including shortlist continuation, skimming, and bounded reading; run regression
+  checks, inspect rendered help, review and commit. No production access needed.
+
+Acceptance: examples are executable, each option stays on its own help line, and the
+workflow rejects wrong-topic/tag/date documents. This is an executable help-recipe test,
+not a claim of independent first-time-agent usability validation.
+
+H1 evidence: upstream v2.20.10 documents/filters.py defines tags__id__all/in,
+created__gte/lt, added__date__gte/lt, and document_type__id__in. The doc_type alias
+now uses the last form for both a single ID and comma-separated IDs; the previous
+document_type parameter was not an ID filter. Focused model/CLI/dependency/HTTP
+tests pass (51 tests), including assertions on the actual request query string.

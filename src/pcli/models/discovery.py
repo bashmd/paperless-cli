@@ -16,7 +16,7 @@ DEFAULT_MAX_DOCS = 200
 DEFAULT_DISCOVERY_SORT = "-score,id"
 
 _FILTER_ALIASES = {
-    "doc_type": "document_type",
+    "doc_type": "document_type__id__in",
 }
 
 

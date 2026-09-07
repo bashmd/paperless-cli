@@ -46,7 +46,7 @@ def test_filter_alias_and_list_normalization() -> None:
         },
     )
     assert model.query == "invoices"
-    assert model.filters["document_type"] == "5,7,9"
+    assert model.filters["document_type__id__in"] == "5,7,9"
     assert model.filters["tag__id"] == "1,2"
     assert model.filters["is_inbox"] == "true"
     assert model.filters["title__icontains"] == "Acme"
