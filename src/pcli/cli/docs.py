@@ -25,7 +25,15 @@ from pcli.adapters.resource_handler import (
     require_confirmation,
     resolve_only_changed,
 )
-from pcli.cli.help_text import FACETS_HELP, FIND_HELP, GET_HELP, PEEK_HELP, SKIM_HELP
+from pcli.cli.help_text import (
+    DOCS_HELP,
+    DOCS_OVERVIEW,
+    FACETS_HELP,
+    FIND_HELP,
+    GET_HELP,
+    PEEK_HELP,
+    SKIM_HELP,
+)
 from pcli.cli.io import emit_success
 from pcli.core.cursor import decode_cursor
 from pcli.core.discovery_scan import ScanResult, scan_batch
@@ -40,23 +48,9 @@ from pcli.core.validation import validate_raw_allowed
 from pcli.core.whitespace import normalize_whitespace as _normalize_whitespace
 from pcli.models.discovery import canonicalize_document_search
 
-_DOCS_HELP = "Document retrieval, discovery, and management commands."
-_DOCS_EPILOG = (
-    "\b\n"
-    "Discovery:\n"
-    '  pcli docs find query="invoice acme" max_docs=100\n'
-    '  pcli docs find query="invoice acme" ids_only=true format=ndjson |\n'
-    "    pcli docs peek from_stdin=true allow_partial=true\n"
-    '  pcli docs find query="late fee" ids_only=true format=ndjson |\n'
-    '    pcli docs skim from_stdin=true allow_partial=true query="late fee"\n'
-    "\n"
-    "Deep retrieval:\n"
-    "  pcli get 123"
-)
-
 app = typer.Typer(
-    help=_DOCS_HELP,
-    epilog=_DOCS_EPILOG,
+    help=DOCS_OVERVIEW,
+    epilog=DOCS_HELP,
     add_completion=False,
     rich_markup_mode=None,
 )

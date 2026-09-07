@@ -14,6 +14,7 @@ from pcli.adapters.auth import (
     request_api_token_sync,
 )
 from pcli.adapters.storage import ConfigStore, CredentialStore, StoragePaths
+from pcli.cli.help_text import plain_help
 from pcli.cli.io import emit_success
 from pcli.core.errors import AuthFailureError, NetworkTimeoutError, UsageValidationError
 from pcli.core.parsing import parse_tokens
@@ -23,8 +24,7 @@ _AUTH_HELP = (
     "(login/status/list/switch/logout)."
 )
 
-_AUTH_EPILOG = (
-    "\b\n"
+_AUTH_EPILOG = plain_help(
     "Action forms:\n"
     "  pcli auth <username> <password> [url=... profile=...]\n"
     "  pcli auth login <username> <password> [url=... profile=...]\n"

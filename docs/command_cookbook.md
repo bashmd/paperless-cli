@@ -18,6 +18,28 @@ pcli auth switch default
 
 ## 2. LLM Discovery Pipelines
 
+Start with `find` for a compact shortlist, `peek` for document beginnings, `skim`
+for literal hits with context, and `get` for bounded reading. `list` and `search`
+return lower-level JSON document listings, including OCR bodies, rather than compact
+resumable discovery output. The same guide is in `pcli docs --help`.
+
+Combine a topic with a tag and document-date window:
+
+```bash
+pcli tags list name__icontains=insurance
+# Replace 7 with the returned tag ID.
+pcli docs find query=insurance tags__id__all=7 \
+  created__gte=2026-01-01 created__lt=2027-01-01 sort=-created
+```
+
+`created` is the document date. The lower bound is inclusive, the upper exclusive;
+use `added__date__gte`/`added__date__lt` for import dates instead. Tag filters take
+IDs: `tags__id__all=7,8` requires both tags; `tags__id__in=7,8` accepts either.
+For document types, `doc_type=7,8` accepts either ID, found with `pcli doc-types list`.
+Filter spellings are verified against the deployed-version
+[Paperless 2.20.10 definitions](https://github.com/paperless-ngx/paperless-ngx/blob/v2.20.10/src/documents/filters.py#L651).
+Unknown API filters may be ignored by the server; do not guess parameter names.
+
 Find candidates and stream ID-only output:
 
 ```bash

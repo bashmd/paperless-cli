@@ -52,3 +52,37 @@ def test_pdf_reader_is_not_loaded_for_cli_startup() -> None:
         timeout=5,
     )
     assert result.returncode == 0, result.stderr
+
+
+@pytest.mark.parametrize(
+    "command,examples",
+    [
+        (["auth"], ["pcli auth status", "pcli auth switch work", "pcli auth logout profile=work"]),
+        (["docs"], ["pcli get 42 max_chars=5000 format=text", "pcli get 42 pages=1-3"]),
+    ],
+)
+def test_group_help_keeps_each_example_on_its_own_line(
+    command: list[str],
+    examples: list[str],
+) -> None:
+    result = CliRunner().invoke(app, [*command, "--help"])
+    assert result.exit_code == 0
+    lines = [line.strip() for line in result.stdout.splitlines()]
+    for example in examples:
+        assert example in lines
+    assert "\b" not in result.stdout and "\x1b[" not in result.stdout
+
+
+def test_docs_orientation_precedes_command_catalog() -> None:
+    result = CliRunner().invoke(app, ["docs", "--help"])
+    intro = result.stdout.split("Commands:")[0]
+    for phrase in [
+        "Shortlist by topic",
+        "Preview the beginning",
+        "literal hits",
+        "bounded OCR",
+        "list/search",
+        "positional",
+        "without discovery budgets or cursors",
+    ]:
+        assert phrase in intro

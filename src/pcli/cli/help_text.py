@@ -1,7 +1,7 @@
 """Plain, copyable usage contracts for token-based retrieval commands."""
 
 
-def _plain(value: str) -> str:
+def plain_help(value: str) -> str:
     # Click's no-reflow marker applies to one paragraph, not the entire epilog.
     return "\n\n".join("\b\n" + part for part in value.strip().split("\n\n"))
 
@@ -9,6 +9,49 @@ def _plain(value: str) -> str:
 _GLOBAL = """
 Connection: profile=NAME url=URL token=TOKEN timeout=SECONDS
 Stored auth is picked up automatically; see pcli auth --help.
+"""
+
+DOCS_OVERVIEW = plain_help("""Document discovery, reading, and management.
+
+Start with find, then peek or skim, then get:
+  find     Shortlist by topic: IDs, titles, sizes, short snippets.
+  peek     Preview the beginning of each selected document.
+  skim     Find literal hits with character context, like grep.
+  get      Read bounded OCR text or actual PDF pages for one ID.
+  facets   Count tags/types/years; choose page or whole-query scope.
+
+list/search are lower-level JSON document listings (including OCR bodies).
+list accepts optional query=TEXT; search requires positional "TEXT".
+Both return one API result page, without discovery budgets or cursors.
+Use find for compact, resumable discovery, not search/list.
+""")
+
+DOCS_HELP = plain_help("""Discovery:
+  pcli docs find query="insurance" max_docs=100
+  pcli docs peek ids=42,17 per_doc_max_chars=500
+  pcli docs skim ids=42,17 query="premium" stop_after_matches=10
+
+Deep retrieval:
+  pcli get 42 max_chars=5000 format=text
+  pcli get 42 pages=1-3
+
+Run pcli docs find --help for topic + tag + date filtering recipes.
+Run each command with --help for defaults, limits, and continuation rules.
+Check complete/next_cursor before treating a shortlist as exhaustive.
+""")
+
+_FILTER_RECIPE = """
+Topic + tag + date recipe (replace 7 with the ID returned by tags list):
+  pcli tags list name__icontains=insurance
+  pcli docs find query=insurance tags__id__all=7 \\
+    created__gte=2026-01-01 created__lt=2027-01-01 sort=-created
+This selects documents dated in 2026, newest first. created is the document
+date, not the import date; use added__date__gte / added__date__lt for imports.
+gte includes the lower date; lt excludes the upper date. Dates use YYYY-MM-DD.
+Tag filters take IDs: tags__id__all=7,8 requires both; tags__id__in=7,8 either.
+Names are not IDs. Filters combine with query; verify spelling because unknown
+API filters can be ignored by the server. doc_type=7,8 matches either type;
+lookup IDs with pcli doc-types list. A single doc_type=7 works too.
 """
 
 _DISCOVERY = """
@@ -40,7 +83,7 @@ Stdin completion is validated before fetching. Upstream errors always fail.
 cursor and from_stdin cannot be combined. Use set -o pipefail in shell pipelines.
 """
 
-FIND_HELP = _plain(
+FIND_HELP = plain_help(
     """Examples:
   pcli docs find query="health insurance" max_docs=100
   pcli docs find query="invoice" sort=-created fields=id,title,page_count,chars_total
@@ -56,10 +99,11 @@ Snippets prefer server highlights, then a short OCR preview; they are not eviden
 of every occurrence. Use peek to preview or skim to find literal hits.
 """
     + _DISCOVERY
+    + _FILTER_RECIPE
     + _GLOBAL
 )
 
-PEEK_HELP = _plain(
+PEEK_HELP = plain_help(
     """Examples:
   pcli docs peek ids=42,17 per_doc_max_chars=500
   pcli docs peek query="insurance" max_docs=30
@@ -80,7 +124,7 @@ excerpt; chars_total measures the full raw OCR. truncated describes the excerpt.
     + _GLOBAL
 )
 
-SKIM_HELP = _plain(
+SKIM_HELP = plain_help(
     """Examples:
   pcli docs skim query="late fee" stop_after_matches=10
   pcli docs skim ids=42,17 query="premium" context_before=80 context_after=160
@@ -103,7 +147,7 @@ page is unknown for OCR hits; page_count describes the whole document.
     + _GLOBAL
 )
 
-GET_HELP = _plain(
+GET_HELP = plain_help(
     """Examples:
   pcli get 42
   pcli get 42 format=text max_chars=5000 start_char=5000
@@ -133,7 +177,7 @@ bytes or parser memory; selected PDF pages are extracted before slicing text.
     + _GLOBAL
 )
 
-FACETS_HELP = _plain(
+FACETS_HELP = plain_help(
     """Examples:
   pcli docs facets query="invoice" by=tags,year facet_scope=all
   pcli docs facets query="insurance" by=correspondent max_docs=100 facet_scope=all

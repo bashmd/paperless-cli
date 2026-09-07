@@ -480,9 +480,9 @@ All API tests used localhost fixtures; no production requests or mutations were 
 
 - [x] H1: Verify tag/date recipes against Paperless 2.20.10 filter definitions and
   actual dependency wire requests; fix the discovered doc_type ID-filter alias; commit.
-- [ ] H2: Explain find/peek/skim/get versus list/search at docs entry; repair auth/docs
+- [x] H2: Explain find/peek/skim/get versus list/search at docs entry; repair auth/docs
   paragraph formatting; add a concise topic+tag+date recipe with lookup and boundaries.
-- [ ] H3: Exercise the documented commands against a local decoy-filled fixture,
+- [x] H3: Exercise the documented commands against a local decoy-filled fixture,
   including shortlist continuation, skimming, and bounded reading; run regression
   checks, inspect rendered help, review and commit. No production access needed.
 
@@ -495,3 +495,12 @@ created__gte/lt, added__date__gte/lt, and document_type__id__in. The doc_type al
 now uses the last form for both a single ID and comma-separated IDs; the previous
 document_type parameter was not an ID filter. Focused model/CLI/dependency/HTTP
 tests pass (51 tests), including assertions on the actual request query string.
+
+H2/H3 acceptance: 390 tests pass; Ruff and strict mypy pass (76 source files).
+Rendered help keeps examples on separate lines and presents command selection before
+the command catalog. Five local HTTP workflow tests execute the rendered recipes,
+exclude wrong-topic/tag/date candidates, include/exclude the documented date boundaries,
+resume a partial shortlist, peek and skim selected IDs, and reconstruct a bounded read.
+Variants cover all/either tag matching, document types, and import-date filtering.
+Reviewed the final diff; no production requests or mutations were made. This validates
+executable recipes, not independent first-time-agent usability.

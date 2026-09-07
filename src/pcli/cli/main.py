@@ -15,7 +15,7 @@ from pcli.cli.auth import app as auth_app
 from pcli.cli.crud_resources import CRUD_RESOURCE_SPECS, build_crud_resource_app
 from pcli.cli.docs import app as docs_app
 from pcli.cli.docs import docs_get
-from pcli.cli.help_text import GET_HELP
+from pcli.cli.help_text import GET_HELP, plain_help
 from pcli.cli.install import install_command
 from pcli.cli.readonly_resources import READ_ONLY_RESOURCE_SPECS, build_readonly_resource_app
 from pcli.cli.singleton_resources import SINGLETON_RESOURCE_SPECS, build_singleton_resource_app
@@ -24,8 +24,7 @@ from pcli.core.errors import PcliError
 from pcli.core.output import render_error, to_json
 
 _MAIN_HELP = "Paperless CLI for predictable, LLM-friendly retrieval and management."
-_MAIN_EPILOG = (
-    "\b\n"
+_MAIN_EPILOG = plain_help(
     "Quick start:\n"
     "  pcli auth <username> <password> url=https://paperless.example.com\n"
     '  pcli docs find query="invoice acme" max_docs=50\n'
